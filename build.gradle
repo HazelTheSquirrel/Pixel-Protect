@@ -9,10 +9,7 @@ version = '0.1.0'
 
 repositories {
     mavenCentral()
-    maven {
-        name = 'papermc'
-        url = 'https://repo.papermc.io/repository/maven-public/'
-    }
+    maven { name = 'papermc'; url = 'https://repo.papermc.io/repository/maven-public/' }
 }
 
 dependencies {
@@ -21,23 +18,22 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'com.zaxxer:HikariCP:7.0.2'
     implementation 'com.mysql:mysql-connector-j:9.7.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
 }
 
 paperweight {
     reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.getMOJANG_PRODUCTION()
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
-    }
-}
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
     options.release.set(25)
     options.compilerArgs.addAll(['-Xlint:all'])
 }
+
+tasks.withType(Test).configureEach { useJUnitPlatform() }
 
 tasks.shadowJar {
     archiveFileName = 'PixelProtect.jar'
@@ -47,6 +43,4 @@ tasks.shadowJar {
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }
 
-tasks.build {
-    dependsOn tasks.shadowJar
-}
+tasks.build { dependsOn tasks.shadowJar }
