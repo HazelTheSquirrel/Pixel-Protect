@@ -5,6 +5,7 @@ import de.pixelprotect.api.PixelProtectApiImpl;
 import de.pixelprotect.command.PixelProtectCommand;
 import de.pixelprotect.listener.AutomationAuditListener;
 import de.pixelprotect.listener.BlockAuditListener;
+import de.pixelprotect.listener.ContainerProcessingAuditListener;
 import de.pixelprotect.listener.InspectListener;
 import de.pixelprotect.listener.InventoryAuditListener;
 import de.pixelprotect.listener.PlayerAuditListener;
@@ -82,6 +83,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new InventoryAuditListener(audit, automation), this);
+        getServer().getPluginManager().registerEvents(new ContainerProcessingAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
         getServer().getPluginManager().registerEvents(new InspectListener(this, inspect, automation), this);
 
