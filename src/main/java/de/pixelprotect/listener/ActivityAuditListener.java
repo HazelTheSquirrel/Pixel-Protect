@@ -12,8 +12,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.SignChangeEvent;
-import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.hanging.HangingBreakEvent;
 import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
@@ -22,6 +20,7 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.plugin.Plugin;
 
 /** Player activity and interaction coverage. Activity records never masquerade as block-entity snapshots. */
@@ -44,9 +43,7 @@ public final class ActivityAuditListener implements Listener {
     public void onWorldChange(PlayerChangedWorldEvent event) { recordPlayer(event.getPlayer(), ActionType.SESSION, "WORLD_CHANGE"); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onDeath(PlayerDeathEvent event) {
-        recordPlayer(event.getPlayer(), ActionType.ENTITY_DEATH, "PLAYER_DEATH:" + safe(event.deathMessage()));
-    }
+    public void onDeath(PlayerDeathEvent event) { recordPlayer(event.getPlayer(), ActionType.ENTITY_DEATH, "PLAYER_DEATH:" + safe(event.deathMessage())); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
@@ -85,9 +82,10 @@ public final class ActivityAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHangingBreak(HangingBreakEvent event) {
         Entity entity = event.getEntity();
-        if (event.getCause() == HangingBreakEvent.RemoveCause.EXPLOSION) {
+        if (event.getCause() == HangingBreakEvent.RemoveCause.EXPLOSION)
             recordEnvironment(entity.getLocation().getBlock(), ActionType.EXPLOSION, "HANGING:" + entity.getType().getKey());
-        }
+        else if (event.getCause() == HangingBreakEvent.RemoveCause.ENTITY)
+            recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_REMOVE, "HANGING:" + entity.getType().getKey());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -104,18 +102,7 @@ public final class ActivityAuditListener implements Listener {
                         "LINES:" + escape(lines), audit.newTransaction(), 0L));
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onDamage(EntityDamageByEntityEvent event) {
-        if (event.getDamager() instanceof Player player) {
-            Entity target = event.getEntity();
-            record(player, target.getLocation().getBlock(), ActionType.ENTITY_DAMAGE,
-                    target.getType().getKey() + ":" + event.getCause().name());
-        }
-    }
-
-    private void recordPlayer(Player player, ActionType action, String detail) {
-        record(player, player.getLocation().getBlock(), action, detail);
-    }
+    private void recordPlayer(Player player, ActionType action, String detail) { record(player, player.getLocation().getBlock(), action, detail); }
 
     private void record(Player player, Block block, ActionType action, String detail) {
         if (player == null || block == null) return;
