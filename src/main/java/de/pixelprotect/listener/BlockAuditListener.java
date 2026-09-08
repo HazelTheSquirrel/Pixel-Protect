@@ -71,7 +71,7 @@ public final class BlockAuditListener implements Listener {
         BlockSnapshot before = singleBefore.remove(event);
         if (before == null) return;
         BlockSnapshot after = BlockSnapshot.capture(event.getBlock());
-        if (!before.blockData().equals(after.blockData()))
+        if (!same(before, after))
             audit.recordPlayer(event.getBlock(), ActionType.BREAK, event.getPlayer(), before, after);
     }
 
@@ -156,7 +156,8 @@ public final class BlockAuditListener implements Listener {
     public void onFluidAfter(BlockFromToEvent event) {
         if (!fluids || !isFluid(event.getBlock().getType())) return;
         BlockSnapshot before = singleBefore.remove(event);
-        if (before != null) audit.recordEnvironment(event.getToBlock(), ActionType.FLUID, before, BlockSnapshot.capture(event.getToBlock()));
+        if (before != null) audit.recordEnvironment(event.getToBlock(), ActionType.FLUID, before, BlockSnapshot.capture(event.getToBlock()),
+                "SOURCE:" + event.getBlock().getLocation().toBlockVector(), audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -226,8 +227,7 @@ public final class BlockAuditListener implements Listener {
         BlockSnapshot before = singleBefore.remove(event);
         if (before == null) return;
         BlockSnapshot after = BlockSnapshot.capture(block);
-        if (!before.blockData().equals(after.blockData()) || before.blockEntity() != null || after.blockEntity() != null)
-            audit.record(block, action, actor, before, after);
+        if (!same(before, after)) audit.record(block, action, actor, before, after);
     }
 
     private void recordStates(List<? extends org.bukkit.block.BlockState> states, ActionType action, Actor actor) {
@@ -235,6 +235,12 @@ public final class BlockAuditListener implements Listener {
         List<Block> blocks = states.stream().map(org.bukkit.block.BlockState::getBlock).toList();
         List<BlockSnapshot> before = states.stream().map(BlockSnapshot::fromState).toList();
         for (int i = 0; i < blocks.size(); i++) audit.record(blocks.get(i), action, actor, before.get(i), BlockSnapshot.capture(blocks.get(i)), transaction, i);
+    }
+
+    private static boolean same(BlockSnapshot a, BlockSnapshot b) {
+        return a.blockData().equals(b.blockData())
+                && java.util.Arrays.equals(a.inventory(), b.inventory())
+                && java.util.Objects.equals(a.blockEntity(), b.blockEntity());
     }
 
     private static boolean isFluid(Material material) { return material == Material.WATER || material == Material.LAVA; }
