@@ -32,17 +32,17 @@ public final class EntityForensicsAuditListener implements Listener {
     public void onDamage(EntityDamageEvent event) {
         if (!damageEnabled) return;
         Entity victim = event.getEntity();
+        Entity damager = event instanceof EntityDamageByEntityEvent byEntity ? byEntity.getDamager() : null;
+        if (!(victim instanceof Player) && !(damager instanceof Player)) return;
+
         Block block = victim.getLocation().getBlock();
         String detail = "CAUSE:" + event.getCause().name() + ":DAMAGE=" + event.getFinalDamage();
-        if (event instanceof EntityDamageByEntityEvent byEntity) {
-            Entity damager = byEntity.getDamager();
-            detail += ":DAMAGER=" + damager.getUniqueId() + ":TYPE=" + damager.getType().getKey();
-            if (damager instanceof Player player) {
-                audit.recordPlayer(block, ActionType.ENTITY_DAMAGE, player, snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
-                return;
-            }
+        if (damager != null) detail += ":DAMAGER=" + damager.getUniqueId() + ":TYPE=" + damager.getType().getKey();
+        if (damager instanceof Player player) {
+            audit.recordPlayer(block, ActionType.ENTITY_DAMAGE, player, snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
+        } else {
+            audit.record(block, ActionType.ENTITY_DAMAGE, Actor.environment(), snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
         }
-        audit.record(block, ActionType.ENTITY_DAMAGE, Actor.environment(), snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -56,7 +56,5 @@ public final class EntityForensicsAuditListener implements Listener {
                 snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
     }
 
-    private static BlockSnapshot snapshot(Block block) {
-        return BlockSnapshot.capture(block);
-    }
+    private static BlockSnapshot snapshot(Block block) { return BlockSnapshot.capture(block); }
 }
