@@ -43,13 +43,8 @@ public final class PixelProtect extends JavaPlugin {
         final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
         try {
             database = switch (backend) {
-                case "sqlite" -> new AsyncOverflowDatabase(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000),
-                        getConfig().getInt("storage.batch-size", 256), getConfig().getLong("storage.flush-interval-millis", 250L), getLogger());
-                case "mysql", "mariadb" -> new MySqlDatabase(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000),
-                        getConfig().getInt("storage.batch-size", 256), getConfig().getLong("storage.flush-interval-millis", 250L), getLogger(),
-                        getConfig().getString("storage.mysql.jdbc-url"), getConfig().getString("storage.mysql.username"), getConfig().getString("storage.mysql.password"),
-                        getConfig().getInt("storage.mysql.maximum-pool-size", 10), getConfig().getInt("storage.mysql.minimum-idle", 2),
-                        getConfig().getLong("storage.mysql.connection-timeout-millis", 5000L), getConfig().getLong("storage.mysql.leak-detection-millis", 0L));
+                case "sqlite" -> new AsyncOverflowDatabase(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000), getConfig().getInt("storage.batch-size", 256), getConfig().getLong("storage.flush-interval-millis", 250L), getLogger());
+                case "mysql", "mariadb" -> new MySqlDatabase(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000), getConfig().getInt("storage.batch-size", 256), getConfig().getLong("storage.flush-interval-millis", 250L), getLogger(), getConfig().getString("storage.mysql.jdbc-url"), getConfig().getString("storage.mysql.username"), getConfig().getString("storage.mysql.password"), getConfig().getInt("storage.mysql.maximum-pool-size", 10), getConfig().getInt("storage.mysql.minimum-idle", 2), getConfig().getLong("storage.mysql.connection-timeout-millis", 5000L), getConfig().getLong("storage.mysql.leak-detection-millis", 0L));
                 default -> throw new IllegalArgumentException("Nicht unterstütztes Speicher-Backend: " + backend);
             };
             database.open();
@@ -68,32 +63,23 @@ public final class PixelProtect extends JavaPlugin {
         final AutomationTracker automation = new AutomationTracker();
         final InspectService inspect = new InspectService(database);
         final RollbackService rollback = new RollbackService(this, audit, database, getConfig().getInt("rollback.max-concurrent-jobs", 1));
-        getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
-                getConfig().getBoolean("logging.block-place-break", true), getConfig().getBoolean("logging.explosions", true),
-                getConfig().getBoolean("logging.fire", true), getConfig().getBoolean("logging.piston", true),
-                getConfig().getBoolean("logging.fluids", true), getConfig().getBoolean("logging.growth", true),
-                getConfig().getBoolean("logging.entity-block-changes", true)), this);
+        getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit, getConfig().getBoolean("logging.block-place-break", true), getConfig().getBoolean("logging.explosions", true), getConfig().getBoolean("logging.fire", true), getConfig().getBoolean("logging.piston", true), getConfig().getBoolean("logging.fluids", true), getConfig().getBoolean("logging.growth", true), getConfig().getBoolean("logging.entity-block-changes", true)), this);
         getServer().getPluginManager().registerEvents(new ModernMechanicsAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new ActivityAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new PlayerTransactionAuditListener(audit), this);
-        getServer().getPluginManager().registerEvents(new InventoryAuditListener(audit, automation), this);
+        getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit, automation), this);
         getServer().getPluginManager().registerEvents(new ContainerProcessingAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
         getServer().getPluginManager().registerEvents(new InspectListener(this, inspect, automation), this);
 
-        final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect,
-                getConfig().getInt("rollback.max-hours", 168), getConfig().getInt("rollback.max-radius", 128),
-                getConfig().getInt("rollback.max-records", 100_000));
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
-                commands -> commands.registrar().register(command.create().build(),
-                        "Protokolliert, untersucht und setzt Weltänderungen zurück"));
+        final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect, getConfig().getInt("rollback.max-hours", 168), getConfig().getInt("rollback.max-radius", 128), getConfig().getInt("rollback.max-records", 100_000));
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands -> commands.registrar().register(command.create().build(), "Protokolliert, untersucht und setzt Weltänderungen zurück"));
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
             final long interval = Math.max(1L, getConfig().getLong("retention.maintenance-interval-ticks", 24_000L));
-            Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task -> database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L)
-                    .thenAccept(api::addRetentionPurged), 20L, interval);
+            Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task -> database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L).thenAccept(api::addRetentionPurged), 20L, interval);
         }
         if (getConfig().getBoolean("diagnostics.enabled", true)) {
             final long interval = Math.max(1L, getConfig().getLong("diagnostics.log-interval-minutes", 5L) * 1200L);
@@ -104,16 +90,11 @@ public final class PixelProtect extends JavaPlugin {
 
     private void logDiagnostics() {
         if (database == null) return;
-        database.count().thenCombine(database.failedRollbackCount(), (auditCount, failedRollbacks) ->
-                "Diagnose: Warteschlange=" + database.queueSize() + ", Protokolle=" + auditCount + ", " + overflowDiagnostics()
-                        + ", fehlgeschlagene Rücksetzungen=" + failedRollbacks + ", Schema=" + database.schemaVersion())
-                .thenAccept(getLogger()::info)
-                .exceptionally(failure -> { getLogger().warning("Diagnose konnte nicht vollständig erstellt werden: " + failure.getMessage()); return null; });
+        database.count().thenCombine(database.failedRollbackCount(), (auditCount, failedRollbacks) -> "Diagnose: Warteschlange=" + database.queueSize() + ", Protokolle=" + auditCount + ", " + overflowDiagnostics() + ", fehlgeschlagene Rücksetzungen=" + failedRollbacks + ", Schema=" + database.schemaVersion()).thenAccept(getLogger()::info).exceptionally(failure -> { getLogger().warning("Diagnose konnte nicht vollständig erstellt werden: " + failure.getMessage()); return null; });
     }
 
     private String overflowDiagnostics() {
-        if (database instanceof AsyncOverflowDatabase overflow)
-            return "Überlauf-Warteschlange=" + overflow.overflowQueueSize() + ", Überlauf-angenommen=" + overflow.overflowAccepted() + ", Überlauf-verworfen=" + overflow.overflowDropped();
+        if (database instanceof AsyncOverflowDatabase overflow) return "Überlauf-Warteschlange=" + overflow.overflowQueueSize() + ", Überlauf-angenommen=" + overflow.overflowAccepted() + ", Überlauf-verworfen=" + overflow.overflowDropped();
         return "Überlauf-Warteschlange=0, Überlauf-angenommen=0, Überlauf-verworfen=0";
     }
 
@@ -121,8 +102,7 @@ public final class PixelProtect extends JavaPlugin {
         final Set<UUID> result = new HashSet<>();
         for (String name : names) {
             final var world = Bukkit.getWorld(name);
-            if (world == null) getLogger().warning("Konfigurierte Welt existiert nicht: " + name);
-            else result.add(world.getUID());
+            if (world == null) getLogger().warning("Konfigurierte Welt existiert nicht: " + name); else result.add(world.getUID());
         }
         return Set.copyOf(result);
     }
