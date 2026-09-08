@@ -13,6 +13,7 @@ import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InspectService;
 import de.pixelprotect.service.RollbackService;
+import de.pixelprotect.storage.AsyncOverflowDatabase;
 import de.pixelprotect.storage.Database;
 import de.pixelprotect.storage.MySqlDatabase;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
@@ -39,7 +40,7 @@ public final class PixelProtect extends JavaPlugin {
         final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
         try {
             database = switch (backend) {
-                case "sqlite" -> new Database(databaseFile,
+                case "sqlite" -> new AsyncOverflowDatabase(databaseFile,
                         getConfig().getInt("storage.queue-capacity", 10_000),
                         getConfig().getInt("storage.batch-size", 256),
                         getConfig().getLong("storage.flush-interval-millis", 250L), getLogger());
@@ -130,9 +131,7 @@ public final class PixelProtect extends JavaPlugin {
         return Set.copyOf(result);
     }
 
-    public PixelProtectApi api() {
-        return api;
-    }
+    public PixelProtectApi api() { return api; }
 
     @Override
     public void onDisable() {
