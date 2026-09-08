@@ -41,7 +41,7 @@ public final class PixelProtect extends JavaPlugin {
 
         final AuditService audit = new AuditService(database);
         final InspectService inspect = new InspectService(database);
-        final RollbackService rollback = new RollbackService(this, audit);
+        final RollbackService rollback = new RollbackService(this, audit, database);
         getServer().getPluginManager().registerEvents(new BlockAuditListener(audit), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(audit), this);
         getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit), this);
