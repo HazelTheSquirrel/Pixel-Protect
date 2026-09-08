@@ -14,24 +14,30 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class PixelProtectApiImpl implements PixelProtectApi {
     private final Database database;
     private final Set<UUID> includedWorlds;
+    private final Set<UUID> excludedWorlds;
     private final CopyOnWriteArrayList<ProtectionAttributor> attributors = new CopyOnWriteArrayList<>();
     private final Path overflowFile;
     private volatile long retentionPurged;
     private volatile boolean running = true;
 
     public PixelProtectApiImpl(Database database, Set<UUID> includedWorlds, Path overflowFile) {
+        this(database, includedWorlds, Set.of(), overflowFile);
+    }
+
+    public PixelProtectApiImpl(Database database, Set<UUID> includedWorlds, Set<UUID> excludedWorlds, Path overflowFile) {
         this.database = database;
         this.includedWorlds = Set.copyOf(includedWorlds);
+        this.excludedWorlds = Set.copyOf(excludedWorlds);
         this.overflowFile = overflowFile;
     }
 
     @Override public UUID newTransaction() { return UUID.randomUUID(); }
-    @Override public boolean isWorldIncluded(UUID world) { return includedWorlds.isEmpty() || includedWorlds.contains(world); }
+    @Override public boolean isWorldIncluded(UUID world) { return !excludedWorlds.contains(world) && (includedWorlds.isEmpty() || includedWorlds.contains(world)); }
     @Override public Diagnostics diagnostics() {
         long overflow = 0;
         try { if (Files.exists(overflowFile)) try (var lines = Files.lines(overflowFile)) { overflow = lines.count(); } }
         catch (Exception ignored) { }
-        return new Diagnostics(running, database.queueSize(), database.schemaVersion(), database.count().join(), retentionPurged, overflow, 0L);
+        return new Diagnostics(running, database.queueSize(), database.schemaVersion(), database.count().join(), retentionPurged, overflow, database.failedRollbackCount().join());
     }
     @Override public void registerProtectionAttributor(ProtectionAttributor attributor) { if (attributor != null) attributors.addIfAbsent(attributor); }
     @Override public void unregisterProtectionAttributor(ProtectionAttributor attributor) { attributors.remove(attributor); }
