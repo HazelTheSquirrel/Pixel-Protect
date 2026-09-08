@@ -2,6 +2,7 @@ package de.pixelprotect.service;
 
 import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.AuditEntry;
+import de.pixelprotect.service.RollbackService.Status;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -40,6 +41,16 @@ public final class MessageService {
             case ENTITY_REMOVE -> "Entität entfernt";
             case ENTITY_DAMAGE -> "Entität beschädigt";
             case PROJECTILE -> "Projektil";
+        };
+    }
+
+    public static String rollbackStatus(Status status) {
+        if (status == null) return "Unbekannt";
+        return switch (status) {
+            case RUNNING -> "Läuft";
+            case COMPLETED -> "Abgeschlossen";
+            case FAILED -> "Fehlgeschlagen";
+            case CANCELLED -> "Abgebrochen";
         };
     }
 
