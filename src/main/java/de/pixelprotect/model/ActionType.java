@@ -10,5 +10,15 @@ public enum ActionType {
     GROW,
     FORM,
     SPREAD,
-    ENTITY_CHANGE
+    ENTITY_CHANGE,
+    BUCKET,
+    CONTAINER,
+    ITEM_DROP,
+    ITEM_PICKUP,
+    ITEM_DESPAWN,
+    ENTITY_SPAWN,
+    ENTITY_DEATH,
+    ENTITY_REMOVE,
+    ENTITY_DAMAGE,
+    PROJECTILE
 }
