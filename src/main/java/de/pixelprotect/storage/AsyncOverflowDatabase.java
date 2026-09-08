@@ -44,29 +44,28 @@ public class AsyncOverflowDatabase extends Database {
 
     @Override
     protected boolean spool(AuditEntry entry) {
-        if (!overflowRunning.get()) {
-            try {
-                Files.writeString(overflowFile, GSON.toJson(entry) + System.lineSeparator(), StandardCharsets.UTF_8,
-                        StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
-                overflowAccepted.incrementAndGet();
-                return true;
-            } catch (IOException exception) {
-                overflowDropped.incrementAndGet();
-                logger.log(Level.SEVERE, "Failed to persist an audit overflow record while the overflow writer was offline.", exception);
-                return false;
-            }
-        }
+        final String line;
         try {
-            overflowQueue.put(GSON.toJson(entry) + System.lineSeparator());
-            overflowAccepted.incrementAndGet();
-            return true;
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            overflowDropped.incrementAndGet();
-            return false;
+            line = GSON.toJson(entry) + System.lineSeparator();
         } catch (RuntimeException exception) {
             overflowDropped.incrementAndGet();
             logger.log(Level.SEVERE, "Audit record could not be serialized for overflow storage.", exception);
+            return false;
+        }
+        if (overflowRunning.get()) {
+            boolean accepted = overflowQueue.offer(line);
+            if (accepted) overflowAccepted.incrementAndGet();
+            else overflowDropped.incrementAndGet();
+            return accepted;
+        }
+        try {
+            Files.writeString(overflowFile, line, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+            overflowAccepted.incrementAndGet();
+            return true;
+        } catch (IOException exception) {
+            overflowDropped.incrementAndGet();
+            logger.log(Level.SEVERE, "Failed to persist an audit overflow record while the overflow writer was offline.", exception);
             return false;
         }
     }
