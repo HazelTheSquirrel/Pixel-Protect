@@ -45,14 +45,15 @@ public final class AutomationTracker {
         Block hopper = event.getBlock();
         Block search = event.getSearchBlock();
         hopperLinks.put(new BlockKey(hopper), new HopperLink(new LocationData(search.getWorld().getUID(),
-                search.getX(), search.getY(), search.getZ()), event.getContainerType().name(), System.currentTimeMillis()));
+                search.getX(), search.getY(), search.getZ()), event.getContainerType(), System.currentTimeMillis()));
     }
 
     public HopperLink hopperLink(Block hopper) {
         if (hopper == null) return null;
-        HopperLink link = hopperLinks.get(new BlockKey(hopper));
+        BlockKey key = new BlockKey(hopper);
+        HopperLink link = hopperLinks.get(key);
         if (link == null || System.currentTimeMillis() - link.time() > TRANSFER_CONTEXT_TTL_MILLIS) {
-            if (link != null) hopperLinks.remove(new BlockKey(hopper), link);
+            if (link != null) hopperLinks.remove(key, link);
             return null;
         }
         return link;
@@ -76,8 +77,24 @@ public final class AutomationTracker {
         }
         if (mechanismBlock == null) return null;
 
+        LocationData sourceLocation = location(sourceBlock);
+        LocationData destinationLocation = location(destinationBlock);
+        if (mechanismBlock.getType() == Material.HOPPER) {
+            HopperLink link = hopperLink(mechanismBlock);
+            if (link != null) {
+                if (sourceBlock != null && sourceBlock.equals(mechanismBlock)
+                        && link.containerType() == HopperInventorySearchEvent.ContainerType.DESTINATION) {
+                    destinationLocation = link.searchBlock();
+                }
+                if (destinationBlock != null && destinationBlock.equals(mechanismBlock)
+                        && link.containerType() == HopperInventorySearchEvent.ContainerType.SOURCE) {
+                    sourceLocation = link.searchBlock();
+                }
+            }
+        }
+
         Actor owner = mechanism == null ? null : mechanism.owner();
-        TransferContext context = new TransferContext(transactionId, location(sourceBlock), location(destinationBlock),
+        TransferContext context = new TransferContext(transactionId, sourceLocation, destinationLocation,
                 location(mechanismBlock), mechanismBlock.getType(), owner, "Hopper-Automatik", System.currentTimeMillis());
         if (transfers.size() >= MAX_TRANSFER_CONTEXTS) cleanupOldest();
         transfers.put(transactionId, context);
@@ -144,7 +161,7 @@ public final class AutomationTracker {
 
     public record LocationData(UUID world, int x, int y, int z) {}
 
-    public record HopperLink(LocationData searchBlock, String containerType, long time) {}
+    public record HopperLink(LocationData searchBlock, HopperInventorySearchEvent.ContainerType containerType, long time) {}
 
     public record TransferContext(UUID transactionId, LocationData source, LocationData destination,
                                   LocationData mechanism, Material mechanismType, Actor owner, String cause, long time) {
