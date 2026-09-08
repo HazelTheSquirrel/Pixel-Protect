@@ -84,8 +84,10 @@ public final class PixelProtectCommand {
                 .then(Commands.literal("purge")
                         .requires(source -> source.getSender().hasPermission("pixelprotect.purge"))
                         .then(Commands.argument("days", IntegerArgumentType.integer(1, 3650))
-                                .executes(ctx -> purge(ctx.getSource().getSender(),
-                                        IntegerArgumentType.getInteger(ctx, "days"))));
+                                .executes(ctx -> {
+                                    final int days = IntegerArgumentType.getInteger(ctx, "days");
+                                    return purge(ctx.getSource().getSender(), days);
+                                }));
         return root;
     }
 
@@ -98,7 +100,11 @@ public final class PixelProtectCommand {
         final long now = System.currentTimeMillis();
         database.query(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(),
                         radius, now - hours * 3_600_000L, now, player, Math.min(100, maxRecords))
-                .thenAccept(entries -> sendLookup(source.getSender(), entries));
+                .thenAccept(entries -> sendLookup(source.getSender(), entries))
+                .exceptionally(throwable -> {
+                    send(source.getSender(), "PixelProtect: lookup failed — " + rootMessage(throwable));
+                    return null;
+                });
         source.getSender().sendPlainMessage("PixelProtect: querying audit history...");
         return Command.SINGLE_SUCCESS;
     }
