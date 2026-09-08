@@ -248,7 +248,7 @@ public final class RollbackService {
                 inverse ? entry.afterBlockEntity() : entry.beforeBlockEntity());
         audit.suppress(block);
         block.setBlockData(Bukkit.createBlockData(target.blockData()), false);
-        restoreInventory(block, target.inventory());
+        if (!restoreInventory(block, target.inventory())) return false;
         return BlockSnapshot.applyBlockEntity(block.getState(), target.blockEntity());
     }
 
@@ -313,15 +313,9 @@ public final class RollbackService {
         }
     }
 
-    private static void restoreInventory(World world, int x, int y, int z, byte[] data) {
-        if (data == null) return;
-        if (!(world.getBlockAt(x, y, z).getState() instanceof InventoryHolder holder)) throw new IllegalStateException("Zielblock besitzt kein Inventar.");
-        holder.getInventory().setContents(ItemStack.deserializeItemsFromBytes(data));
-    }
-
-    private static boolean restoreInventory(World world, AuditEntry entry, byte[] data) {
+    private static boolean restoreInventory(org.bukkit.block.Block block, byte[] data) {
         if (data == null) return true;
-        if (!(world.getBlockAt(entry.x(), entry.y(), entry.z()).getState() instanceof InventoryHolder holder)) return false;
+        if (!(block.getState() instanceof InventoryHolder holder)) return false;
         holder.getInventory().setContents(ItemStack.deserializeItemsFromBytes(data));
         return true;
     }
