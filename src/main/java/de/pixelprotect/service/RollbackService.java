@@ -12,37 +12,72 @@ import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class RollbackService {
-    private static final java.util.Set<ActionType> ROLLBACKABLE = java.util.EnumSet.of(
+    private static final java.util.Set<ActionType> ROLLBACKABLE = EnumSet.of(
             ActionType.BREAK, ActionType.PLACE, ActionType.BURN, ActionType.EXPLOSION,
             ActionType.PISTON, ActionType.FLUID, ActionType.GROW, ActionType.FORM,
-            ActionType.SPREAD, ActionType.ENTITY_CHANGE, ActionType.BUCKET
+            ActionType.SPREAD, ActionType.ENTITY_CHANGE, ActionType.BUCKET, ActionType.CONTAINER
     );
 
     private final Plugin plugin;
-    private final de.pixelprotect.service.AuditService audit;
+    private final AuditService audit;
+    private final ConcurrentHashMap<UUID, Job> jobs = new ConcurrentHashMap<>();
 
-    public RollbackService(Plugin plugin, de.pixelprotect.service.AuditService audit) {
+    public RollbackService(Plugin plugin, AuditService audit) {
         this.plugin = plugin;
         this.audit = audit;
     }
 
     public CompletableFuture<Result> preview(List<AuditEntry> entries) {
-        return evaluate(entries, false);
+        return evaluate(entries, false, null);
     }
 
     public CompletableFuture<Result> rollback(List<AuditEntry> entries) {
-        return evaluate(entries, true);
+        return evaluate(entries, true, null);
     }
 
-    private CompletableFuture<Result> evaluate(List<AuditEntry> entries, boolean mutate) {
+    public CompletableFuture<JobSnapshot> start(List<AuditEntry> entries) {
+        final UUID id = UUID.randomUUID();
+        final Job job = new Job(id, entries.size());
+        jobs.put(id, job);
+        evaluate(entries, true, job).whenComplete((result, throwable) -> {
+            if (throwable != null) {
+                job.status.set(Status.FAILED);
+                job.error = rootMessage(throwable);
+            } else if (job.cancelled.get()) {
+                job.status.set(Status.CANCELLED);
+            } else {
+                job.status.set(Status.COMPLETED);
+            }
+            job.snapshot = snapshot(job);
+        });
+        return CompletableFuture.completedFuture(snapshot(job));
+    }
+
+    public JobSnapshot status(UUID id) {
+        final Job job = jobs.get(id);
+        return job == null ? null : snapshot(job);
+    }
+
+    public boolean cancel(UUID id) {
+        final Job job = jobs.get(id);
+        if (job == null || job.status.get() != Status.RUNNING) return false;
+        job.cancelled.set(true);
+        return true;
+    }
+
+    private CompletableFuture<Result> evaluate(List<AuditEntry> entries, boolean mutate, Job job) {
         if (entries.isEmpty()) return CompletableFuture.completedFuture(new Result(0, 0));
         final Map<ChunkKey, List<AuditEntry>> byChunk = new HashMap<>();
         int unsupported = 0;
@@ -55,7 +90,12 @@ public final class RollbackService {
         }
 
         final int initialSkipped = unsupported;
+        if (job != null) {
+            job.status.set(Status.RUNNING);
+            job.skipped.addAndGet(initialSkipped);
+        }
         if (byChunk.isEmpty()) return CompletableFuture.completedFuture(new Result(0, initialSkipped));
+
         final CompletableFuture<Result> future = new CompletableFuture<>();
         final AtomicInteger remaining = new AtomicInteger(byChunk.size());
         final AtomicInteger applied = new AtomicInteger();
@@ -68,15 +108,18 @@ public final class RollbackService {
             final var world = Bukkit.getWorld(key.world());
             if (world == null) {
                 skipped.addAndGet(chunkEntries.size());
+                if (job != null) job.skipped.addAndGet(chunkEntries.size());
                 completeIfFinished(future, remaining, applied, skipped);
                 continue;
             }
             scheduler.run(plugin, world, key.chunkX(), key.chunkZ(), task -> {
                 for (AuditEntry entry : chunkEntries) {
+                    if (job != null && job.cancelled.get()) break;
                     try {
                         final Block block = world.getBlockAt(entry.x(), entry.y(), entry.z());
                         if (!matchesRecordedState(block, entry)) {
                             skipped.incrementAndGet();
+                            if (job != null) job.skipped.incrementAndGet();
                             continue;
                         }
                         if (mutate) {
@@ -86,10 +129,14 @@ public final class RollbackService {
                             restoreInventory(block, entry.beforeInventory());
                         }
                         applied.incrementAndGet();
+                        if (job != null) job.applied.incrementAndGet();
                     } catch (RuntimeException exception) {
                         skipped.incrementAndGet();
+                        if (job != null) job.skipped.incrementAndGet();
                     }
+                    if (job != null) job.processed.incrementAndGet();
                 }
+                if (job != null && job.cancelled.get()) job.status.set(Status.CANCELLED);
                 completeIfFinished(future, remaining, applied, skipped);
             });
         }
@@ -119,6 +166,38 @@ public final class RollbackService {
         if (state instanceof InventoryHolder holder) holder.getInventory().setContents(ItemStack.deserializeItemsFromBytes(data));
     }
 
+    private static String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) current = current.getCause();
+        return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
+    }
+
+    private JobSnapshot snapshot(Job job) {
+        final JobSnapshot current = new JobSnapshot(job.id, job.status.get(), job.total, job.processed.get(),
+                job.applied.get(), job.skipped.get(), job.error);
+        job.snapshot = current;
+        return current;
+    }
+
     private record ChunkKey(UUID world, int chunkX, int chunkZ) {}
     public record Result(int applied, int skipped) {}
+    public record JobSnapshot(UUID id, Status status, int total, int processed, int applied, int skipped, String error) {}
+    public enum Status { RUNNING, COMPLETED, CANCELLED, FAILED }
+
+    private static final class Job {
+        private final UUID id;
+        private final int total;
+        private final AtomicInteger processed = new AtomicInteger();
+        private final AtomicInteger applied = new AtomicInteger();
+        private final AtomicInteger skipped = new AtomicInteger();
+        private final AtomicBoolean cancelled = new AtomicBoolean();
+        private final AtomicReference<Status> status = new AtomicReference<>(Status.RUNNING);
+        private volatile String error;
+        private volatile JobSnapshot snapshot;
+
+        private Job(UUID id, int total) {
+            this.id = id;
+            this.total = total;
+        }
+    }
 }
