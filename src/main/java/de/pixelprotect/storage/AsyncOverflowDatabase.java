@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
-import java.util.logging.Logger;
 
 /** Durable overflow writer that never performs disk I/O on an event or region thread. */
 public class AsyncOverflowDatabase extends Database {
@@ -24,9 +23,10 @@ public class AsyncOverflowDatabase extends Database {
     private final AtomicBoolean overflowRunning = new AtomicBoolean();
     private final AtomicLong overflowAccepted = new AtomicLong();
     private final AtomicLong overflowDropped = new AtomicLong();
+    private final Object overflowFileLock = new Object();
     private final Thread overflowWriter;
 
-    public AsyncOverflowDatabase(Path file, int queueCapacity, int batchSize, long flushIntervalMillis, Logger logger) {
+    public AsyncOverflowDatabase(Path file, int queueCapacity, int batchSize, long flushIntervalMillis, java.util.logging.Logger logger) {
         super(file, queueCapacity, batchSize, flushIntervalMillis, logger);
         int capacity = Math.max(256, Math.min(50_000, queueCapacity));
         this.overflowQueue = new ArrayBlockingQueue<>(capacity);
@@ -48,17 +48,13 @@ public class AsyncOverflowDatabase extends Database {
     protected boolean spool(AuditEntry entry) {
         if (!overflowRunning.get()) return false;
         final String line;
-        try {
-            line = GSON.toJson(entry) + System.lineSeparator();
-        } catch (RuntimeException ex) {
+        try { line = GSON.toJson(entry) + System.lineSeparator(); }
+        catch (RuntimeException ex) {
             logger.log(Level.SEVERE, "Audit record could not be serialized for overflow storage.", ex);
             overflowDropped.incrementAndGet();
             return false;
         }
-        if (!overflowQueue.offer(line)) {
-            overflowDropped.incrementAndGet();
-            return false;
-        }
+        if (!overflowQueue.offer(line)) { overflowDropped.incrementAndGet(); return false; }
         overflowAccepted.incrementAndGet();
         return true;
     }
@@ -67,8 +63,7 @@ public class AsyncOverflowDatabase extends Database {
     public java.util.concurrent.CompletableFuture<Integer> purgeBefore(long cutoff) {
         return executeAsync(() -> {
             flushQueue();
-            try (PreparedStatement statement = connection.prepareStatement(
-                    "DELETE FROM audit WHERE time < ? AND id NOT IN (SELECT audit_id FROM rollback_job_entries)")) {
+            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM audit WHERE time < ? AND id NOT IN (SELECT audit_id FROM rollback_job_entries)")) {
                 statement.setLong(1, cutoff);
                 return statement.executeUpdate();
             }
@@ -78,6 +73,11 @@ public class AsyncOverflowDatabase extends Database {
     public long overflowAccepted() { return overflowAccepted.get(); }
     public long overflowDropped() { return overflowDropped.get(); }
     public int overflowQueueSize() { return overflowQueue.size(); }
+
+    @Override
+    protected void replayOverflow() {
+        synchronized (overflowFileLock) { super.replayOverflow(); }
+    }
 
     private void writeOverflowLoop() {
         while (overflowRunning.get() || !overflowQueue.isEmpty()) {
@@ -89,18 +89,17 @@ public class AsyncOverflowDatabase extends Database {
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, "Failed to persist an audit overflow record.", ex);
                 try { Thread.sleep(250L); }
-                catch (InterruptedException interrupted) {
-                    if (!overflowRunning.get()) Thread.currentThread().interrupt();
-                }
+                catch (InterruptedException interrupted) { if (!overflowRunning.get()) Thread.currentThread().interrupt(); }
             }
         }
     }
 
     private void appendLine(String line) throws IOException {
-        Path parent = overflowFile.toAbsolutePath().getParent();
-        if (parent != null) Files.createDirectories(parent);
-        Files.writeString(overflowFile, line, StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+        synchronized (overflowFileLock) {
+            Path parent = overflowFile.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            Files.writeString(overflowFile, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND);
+        }
     }
 
     @Override
