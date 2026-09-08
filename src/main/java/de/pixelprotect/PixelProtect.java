@@ -22,7 +22,6 @@ public final class PixelProtect extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
-
         try {
             final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
             database = new Database(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000), getConfig().getInt("storage.batch-size", 256),
@@ -37,9 +36,7 @@ public final class PixelProtect extends JavaPlugin {
         final AuditService audit = new AuditService(database);
         final InspectService inspect = new InspectService(database);
         final RollbackService rollback = new RollbackService(this, audit, database);
-        getServer().getPluginManager().registerEvents(new BlockAuditListener(
-                this,
-                audit,
+        getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
                 getConfig().getBoolean("logging.block-place-break", true),
                 getConfig().getBoolean("logging.explosions", true),
                 getConfig().getBoolean("logging.fire", true),
@@ -47,7 +44,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.fluids", true),
                 getConfig().getBoolean("logging.growth", true),
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
-        getServer().getPluginManager().registerEvents(new PlayerAuditListener(audit), this);
+        getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new InspectListener(this, inspect), this);
 
@@ -63,7 +60,6 @@ public final class PixelProtect extends JavaPlugin {
             Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task ->
                     database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L), 20L, 24_000L);
         }
-
         getLogger().info("PixelProtect enabled. Standalone audit core is ready.");
     }
 
