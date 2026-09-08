@@ -7,37 +7,30 @@ import io.papermc.paper.event.inventory.ItemCraftedEvent;
 import io.papermc.paper.event.player.PlayerInsertLecternBookEvent;
 import io.papermc.paper.event.player.PlayerItemFrameChangeEvent;
 import io.papermc.paper.event.player.PlayerLecternPageChangeEvent;
-import io.papermc.paper.event.player.PlayerTakeLecternBookEvent;
 import io.papermc.paper.event.player.PlayerTradeEvent;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerTakeLecternBookEvent;
 import org.bukkit.inventory.ItemStack;
 
-/** Player-facing transaction coverage for modern Paper inventory interactions. */
 public final class PlayerTransactionAuditListener implements Listener {
     private final AuditService audit;
-
-    public PlayerTransactionAuditListener(AuditService audit) {
-        this.audit = audit;
-    }
+    public PlayerTransactionAuditListener(AuditService audit) { this.audit = audit; }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCraft(ItemCraftedEvent event) {
-        Player player = event.getPlayer();
-        ItemStack item = event.getCraftedItem();
-        record(player, player.getLocation().getBlock(), ActionType.CRAFT,
-                "CRAFT:" + item.getType().getKey() + ":" + item.getAmount());
+        Player player = event.getPlayer(); ItemStack item = event.getCraftedItem();
+        record(player, player.getLocation().getBlock(), ActionType.CRAFT, "CRAFT:" + item.getType().getKey() + ":" + item.getAmount());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onTrade(PlayerTradeEvent event) {
         Player player = event.getPlayer();
-        String result = event.getTrade().getResult().getType().getKey().toString();
         record(player, event.getVillager().getLocation().getBlock(), ActionType.TRADE,
-                "TRADE:" + result + ":uses=" + event.getTrade().getUses());
+                "TRADE:" + event.getTrade().getResult().getType().getKey() + ":uses=" + event.getTrade().getUses());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -48,8 +41,7 @@ public final class PlayerTransactionAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onInsertLectern(PlayerInsertLecternBookEvent event) {
-        record(event.getPlayer(), event.getBlock(), ActionType.CONTAINER,
-                "LECTERN_INSERT:" + event.getBook().getType().getKey());
+        record(event.getPlayer(), event.getBlock(), ActionType.CONTAINER, "LECTERN_INSERT:" + event.getBook().getType().getKey());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
