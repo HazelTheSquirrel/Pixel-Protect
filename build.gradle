@@ -18,6 +18,9 @@ repositories {
 dependencies {
     paperweight.paperDevBundle('26.2.build.121-stable')
     implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
+    implementation 'com.google.code.gson:gson:2.13.1'
+    implementation 'com.zaxxer:HikariCP:7.0.2'
+    implementation 'com.mysql:mysql-connector-j:9.7.0'
 }
 
 paperweight {
