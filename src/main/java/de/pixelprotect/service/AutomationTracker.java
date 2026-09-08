@@ -6,6 +6,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.HopperInventorySearchEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 
@@ -23,6 +24,7 @@ public final class AutomationTracker {
     private static final int MAX_TRANSFER_CONTEXTS = 10_000;
 
     private final Map<BlockKey, Mechanism> mechanisms = new ConcurrentHashMap<>();
+    private final Map<BlockKey, HopperLink> hopperLinks = new ConcurrentHashMap<>();
     private final Map<UUID, TransferContext> transfers = new ConcurrentHashMap<>();
 
     public void recordPlacement(Block block, Player player) {
@@ -32,7 +34,28 @@ public final class AutomationTracker {
     }
 
     public void recordRemoval(Block block) {
-        if (block != null) mechanisms.remove(new BlockKey(block));
+        if (block == null) return;
+        BlockKey key = new BlockKey(block);
+        mechanisms.remove(key);
+        hopperLinks.remove(key);
+    }
+
+    public void recordHopperSearch(HopperInventorySearchEvent event) {
+        if (event == null || event.getBlock() == null || event.getSearchBlock() == null) return;
+        Block hopper = event.getBlock();
+        Block search = event.getSearchBlock();
+        hopperLinks.put(new BlockKey(hopper), new HopperLink(new LocationData(search.getWorld().getUID(),
+                search.getX(), search.getY(), search.getZ()), event.getContainerType().name(), System.currentTimeMillis()));
+    }
+
+    public HopperLink hopperLink(Block hopper) {
+        if (hopper == null) return null;
+        HopperLink link = hopperLinks.get(new BlockKey(hopper));
+        if (link == null || System.currentTimeMillis() - link.time() > TRANSFER_CONTEXT_TTL_MILLIS) {
+            if (link != null) hopperLinks.remove(new BlockKey(hopper), link);
+            return null;
+        }
+        return link;
     }
 
     public TransferContext trackTransfer(UUID transactionId, Inventory source, Inventory destination) {
@@ -83,6 +106,7 @@ public final class AutomationTracker {
     private void cleanupTransfers() {
         long cutoff = System.currentTimeMillis() - TRANSFER_CONTEXT_TTL_MILLIS;
         transfers.entrySet().removeIf(entry -> entry.getValue().time() < cutoff);
+        hopperLinks.entrySet().removeIf(entry -> entry.getValue().time() < cutoff);
     }
 
     private void cleanupOldest() {
@@ -119,6 +143,8 @@ public final class AutomationTracker {
     }
 
     public record LocationData(UUID world, int x, int y, int z) {}
+
+    public record HopperLink(LocationData searchBlock, String containerType, long time) {}
 
     public record TransferContext(UUID transactionId, LocationData source, LocationData destination,
                                   LocationData mechanism, Material mechanismType, Actor owner, String cause, long time) {
