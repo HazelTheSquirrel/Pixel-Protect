@@ -1,11 +1,12 @@
 package de.pixelprotect.listener;
 
 import de.pixelprotect.model.ActionType;
-import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.model.Actor;
+import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -46,7 +47,7 @@ public final class EntityForensicsAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDeath(EntityDeathEvent event) {
-        Entity victim = event.getEntity();
+        LivingEntity victim = event.getEntity();
         Block block = victim.getLocation().getBlock();
         String killer = victim.getKiller() == null ? "none" : victim.getKiller().getUniqueId().toString();
         String detail = "CAUSE=DEATH:KILLER=" + killer + ":DROPS=" + event.getDrops().size() + ":XP=" + event.getDroppedExp();
