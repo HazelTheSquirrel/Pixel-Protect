@@ -9,10 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/**
- * PixelProtect's own query grammar. It deliberately does not copy another plugin's parser.
- * Supported selectors: u:, t:, r:, a:, i:, e:, #count and #preview.
- */
+/** PixelProtect's own query grammar; it is intentionally independent of other plugins. */
 public final class SelectorParser {
     private SelectorParser() {}
 
@@ -47,7 +44,7 @@ public final class SelectorParser {
                     case "u" -> user = raw;
                     case "t" -> hours = parseDurationHours(raw);
                     case "r" -> radius = Integer.parseInt(raw);
-                    case "a" -> addActions(raw, includeActions);
+                    case "a" -> addActions(raw, includeActions, excludeActions);
                     case "i" -> addValues(raw, includeBlocks);
                     case "e" -> addValues(raw, excludeBlocks);
                     default -> errors.add("Unbekannter Selektor: " + key + ":");
@@ -63,13 +60,16 @@ public final class SelectorParser {
                 countOnly, preview, errors);
     }
 
-    private static void addActions(String raw, Set<ActionType> target) {
+    private static void addActions(String raw, Set<ActionType> include, Set<ActionType> exclude) {
         for (String part : raw.split(",")) {
-            final String normalized = part.trim().toUpperCase(Locale.ROOT);
+            final String value = part.trim();
+            if (value.isEmpty()) continue;
+            final boolean negative = value.startsWith("-");
+            final String normalized = (negative ? value.substring(1) : value).toUpperCase(Locale.ROOT);
             try {
-                target.add(ActionType.valueOf(normalized));
+                (negative ? exclude : include).add(ActionType.valueOf(normalized));
             } catch (IllegalArgumentException ex) {
-                throw new IllegalArgumentException("Unbekannte Aktion: " + part.trim());
+                throw new IllegalArgumentException("Unbekannte Aktion: " + value);
             }
         }
     }
