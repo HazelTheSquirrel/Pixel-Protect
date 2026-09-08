@@ -113,12 +113,17 @@ public final class Database implements AutoCloseable {
     }
 
     public CompletableFuture<List<AuditEntry>> query(AuditQuery query) {
-        final CompletableFuture<List<AuditEntry>> future = new CompletableFuture<>();
-        executor.execute(() -> {
-            try { flushQueue(); future.complete(queryBlocking(query)); }
-            catch (Throwable throwable) { future.completeExceptionally(throwable); }
+        return executeAsync(() -> {
+            flushQueue();
+            return queryBlocking(query);
         });
-        return future;
+    }
+
+    public CompletableFuture<Long> count(AuditQuery query) {
+        return executeAsync(() -> {
+            flushQueue();
+            return countBlocking(query);
+        });
     }
 
     public CompletableFuture<List<AuditEntry>> query(UUID world, int centerX, int centerY, int centerZ,
@@ -128,13 +133,34 @@ public final class Database implements AutoCloseable {
     }
 
     private List<AuditEntry> queryBlocking(AuditQuery query) throws SQLException {
+        final QuerySql built = buildQuery(query, false);
+        final String sql = built.sql() + " ORDER BY time DESC,id DESC LIMIT ?";
+        final List<Object> params = new ArrayList<>(built.params());
+        params.add(query.limit());
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            bind(statement, params);
+            try (ResultSet result = statement.executeQuery()) {
+                final List<AuditEntry> entries = new ArrayList<>();
+                while (result.next()) entries.add(read(result));
+                return entries;
+            }
+        }
+    }
+
+    private long countBlocking(AuditQuery query) throws SQLException {
+        final QuerySql built = buildQuery(query, true);
+        try (PreparedStatement statement = connection.prepareStatement(built.sql())) {
+            bind(statement, built.params());
+            try (ResultSet result = statement.executeQuery()) return result.next() ? result.getLong(1) : 0L;
+        }
+    }
+
+    private QuerySql buildQuery(AuditQuery query, boolean count) {
         final int radius = query.radius();
         final long radiusSquared = (long) radius * radius;
-        final StringBuilder sql = new StringBuilder("""
-                SELECT id,time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory
-                FROM audit WHERE world=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ?
-                AND ((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) <= ? AND time>=? AND time<=?
-                """);
+        final StringBuilder sql = new StringBuilder(count ? "SELECT COUNT(*) FROM audit WHERE " : "SELECT id,time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory FROM audit WHERE ");
+        sql.append("world=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ?");
+        sql.append(" AND ((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) <= ? AND time>=? AND time<=?");
         final List<Object> params = new ArrayList<>();
         params.add(query.world().toString());
         params.add(query.centerX() - radius); params.add(query.centerX() + radius);
@@ -148,16 +174,7 @@ public final class Database implements AutoCloseable {
         appendActions(sql, params, query.excludeActions(), false);
         appendBlocks(sql, params, query.includeBlocks(), false);
         appendBlocks(sql, params, query.excludeBlocks(), true);
-        sql.append(" ORDER BY time DESC,id DESC LIMIT ?");
-        params.add(query.limit());
-        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
-            for (int i = 0; i < params.size(); i++) setParameter(statement, i + 1, params.get(i));
-            try (ResultSet result = statement.executeQuery()) {
-                final List<AuditEntry> entries = new ArrayList<>();
-                while (result.next()) entries.add(read(result));
-                return entries;
-            }
-        }
+        return new QuerySql(sql.toString(), params);
     }
 
     private static void appendActions(StringBuilder sql, List<Object> params, java.util.Set<ActionType> actions, boolean include) {
@@ -174,6 +191,10 @@ public final class Database implements AutoCloseable {
             sql.append(exclude ? " AND before_data NOT LIKE ? AND after_data NOT LIKE ?" : " AND (before_data LIKE ? OR after_data LIKE ?)");
             params.add(block + "%"); params.add(block + "%");
         }
+    }
+
+    private static void bind(PreparedStatement statement, List<Object> params) throws SQLException {
+        for (int i = 0; i < params.size(); i++) setParameter(statement, i + 1, params.get(i));
     }
 
     private static void setParameter(PreparedStatement statement, int index, Object value) throws SQLException {
@@ -258,5 +279,6 @@ public final class Database implements AutoCloseable {
         catch (SQLException exception) { logger.warning("Failed to close SQLite connection: " + exception.getMessage()); }
     }
 
+    private record QuerySql(String sql, List<Object> params) {}
     @FunctionalInterface private interface SqlSupplier<T> { T get() throws Exception; }
 }
