@@ -36,8 +36,11 @@ public class AsyncOverflowDatabase extends Database {
     @Override
     public void open() throws java.sql.SQLException, IOException {
         super.open();
-        overflowRunning.set(true);
-        overflowWriter.start();
+        startOverflowWriter();
+    }
+
+    protected final void startOverflowWriter() {
+        if (overflowRunning.compareAndSet(false, true)) overflowWriter.start();
     }
 
     @Override
