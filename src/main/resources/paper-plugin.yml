@@ -1,5 +1,5 @@
 name: PixelProtect
-version: '0.1.0'
+version: '1.0.0'
 main: de.pixelprotect.PixelProtect
 api-version: '26.2'
 author: HazelTheSquirrel
