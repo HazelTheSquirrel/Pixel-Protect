@@ -19,6 +19,7 @@ import org.bukkit.plugin.Plugin;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class PixelProtectCommand {
@@ -60,6 +61,12 @@ public final class PixelProtectCommand {
                         .then(Commands.argument("selectors", StringArgumentType.greedyString())
                                 .executes(ctx -> lookup(ctx.getSource(), 5, 1, StringArgumentType.getString(ctx, "selectors")))))
                 .then(Commands.literal("rollback").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
+                        .then(Commands.literal("status")
+                                .then(Commands.argument("job", StringArgumentType.word())
+                                        .executes(ctx -> rollbackStatus(ctx.getSource().getSender(), StringArgumentType.getString(ctx, "job")))))
+                        .then(Commands.literal("cancel")
+                                .then(Commands.argument("job", StringArgumentType.word())
+                                        .executes(ctx -> rollbackCancel(ctx.getSource().getSender(), StringArgumentType.getString(ctx, "job")))))
                         .then(Commands.argument("radius", IntegerArgumentType.integer(1, maxRadius))
                                 .then(Commands.argument("hours", IntegerArgumentType.integer(1, maxHours))
                                         .executes(ctx -> rollback(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "radius"), IntegerArgumentType.getInteger(ctx, "hours"), ""))
@@ -113,19 +120,43 @@ public final class PixelProtectCommand {
         database.query(query).thenCompose(entries -> {
             if (entries.isEmpty()) {
                 send(sender, parsed.preview() ? "PixelProtect: preview found no matching records." : "PixelProtect: nothing to rollback.");
-                return CompletableFuture.completedFuture(new RollbackService.Result(0, 0));
+                return CompletableFuture.completedFuture(null);
             }
             if (parsed.preview()) {
                 send(sender, "PixelProtect: evaluating rollback guards for " + entries.size() + " record(s)...");
-                return rollback.preview(entries);
+                return rollback.preview(entries).thenApply(result -> "preview:" + result.applied() + ":" + result.skipped());
             }
-            send(sender, "PixelProtect: rolling back " + entries.size() + " audit record(s)...");
-            return rollback.rollback(entries);
+            return rollback.start(entries).thenApply(job -> "job:" + job.id());
         }).thenAccept(result -> {
-            if (parsed.preview()) send(sender, "PixelProtect: preview complete. Would apply " + result.applied() + ", skip " + result.skipped() + ".");
-            else send(sender, "PixelProtect: rollback complete. Applied " + result.applied() + ", skipped " + result.skipped() + ".");
+            if (result == null) return;
+            if (result.startsWith("preview:")) {
+                final String[] parts = result.split(":");
+                send(sender, "PixelProtect: preview complete. Would apply " + parts[1] + ", skip " + parts[2] + ".");
+            } else {
+                send(sender, "PixelProtect: rollback job started: " + result.substring("job:".length()) + ". Use /pixelprotect rollback status <job> for progress.");
+            }
         }).exceptionally(t -> { send(sender, "PixelProtect: operation failed — " + rootMessage(t)); return null; });
         return Command.SINGLE_SUCCESS;
+    }
+
+    private int rollbackStatus(CommandSender sender, String rawId) {
+        try {
+            final UUID id = UUID.fromString(rawId);
+            final RollbackService.JobSnapshot job = rollback.status(id);
+            if (job == null) return message(sender, "PixelProtect: rollback job not found.");
+            return message(sender, "PixelProtect: job " + job.id() + " — " + job.status() + " — processed " + job.processed() + "/" + job.total() + ", applied " + job.applied() + ", skipped " + job.skipped() + (job.error() == null ? "" : " — " + job.error()));
+        } catch (IllegalArgumentException exception) {
+            return message(sender, "PixelProtect: invalid rollback job id.");
+        }
+    }
+
+    private int rollbackCancel(CommandSender sender, String rawId) {
+        try {
+            final UUID id = UUID.fromString(rawId);
+            return message(sender, rollback.cancel(id) ? "PixelProtect: rollback cancellation requested." : "PixelProtect: rollback job not found or already finished.");
+        } catch (IllegalArgumentException exception) {
+            return message(sender, "PixelProtect: invalid rollback job id.");
+        }
     }
 
     private AuditQuery query(Location location, SelectorParser.Parsed parsed) {
@@ -153,6 +184,8 @@ public final class PixelProtectCommand {
         sender.sendPlainMessage("PixelProtect: /pixelprotect inspect");
         sender.sendPlainMessage("PixelProtect: /pixelprotect lookup <radius> <hours> [u:<player>] [r:<radius>] [t:<time>] [a:<actions>] [i:<blocks>] [e:<blocks>] [#count]");
         sender.sendPlainMessage("PixelProtect: /pixelprotect rollback <radius> <hours> [selectors] [#preview]");
+        sender.sendPlainMessage("PixelProtect: /pixelprotect rollback status <job>");
+        sender.sendPlainMessage("PixelProtect: /pixelprotect rollback cancel <job>");
         sender.sendPlainMessage("PixelProtect: actions include BREAK, PLACE, BURN, EXPLOSION, PISTON, FLUID, GROW, FORM, SPREAD, ENTITY_CHANGE, BUCKET and CONTAINER.");
         sender.sendPlainMessage("PixelProtect: prefix an action with '-' inside a:<...> to exclude it.");
         return Command.SINGLE_SUCCESS;
