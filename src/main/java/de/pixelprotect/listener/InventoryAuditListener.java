@@ -16,6 +16,7 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
@@ -46,7 +47,7 @@ public final class InventoryAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onClickAfter(InventoryClickEvent event) {
-        finish(event, actor(event.getWhoClicked() instanceof Player player ? player : null), "PLAYER_CONTAINER_INTERACTION");
+        finish(event, actor(event.getWhoClicked() instanceof Player player ? player : null));
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -56,7 +57,7 @@ public final class InventoryAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onDragAfter(InventoryDragEvent event) {
-        finish(event, actor(event.getWhoClicked() instanceof Player player ? player : null), "PLAYER_CONTAINER_INTERACTION");
+        finish(event, actor(event.getWhoClicked() instanceof Player player ? player : null));
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -66,7 +67,7 @@ public final class InventoryAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onMoveAfter(InventoryMoveItemEvent event) {
-        finish(event, Actor.environment(), "HOPPER_AUTOMATION");
+        finish(event, Actor.environment());
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -76,27 +77,22 @@ public final class InventoryAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onPickupAfter(InventoryPickupItemEvent event) {
-        finish(event, Actor.environment(), "ITEM_ENTITY_PICKUP");
+        finish(event, Actor.environment());
     }
 
     private void captureBefore(Object event, List<Inventory> inventories) {
         List<Snapshot> snapshots = new ArrayList<>();
         for (Inventory inventory : inventories) {
             Snapshot snapshot = snapshot(inventory);
-            if (snapshot != null) {
-                snapshots.add(snapshot);
-            }
+            if (snapshot != null) snapshots.add(snapshot);
         }
         synchronized (pending) {
-            if (snapshots.isEmpty()) {
-                pending.remove(event);
-            } else {
-                pending.put(event, new PendingEvent(UUID.randomUUID(), snapshots));
-            }
+            if (snapshots.isEmpty()) pending.remove(event);
+            else pending.put(event, new PendingEvent(UUID.randomUUID(), snapshots));
         }
     }
 
-    private void finish(Object event, Actor actor, String cause) {
+    private void finish(Object event, Actor actor) {
         final PendingEvent state;
         synchronized (pending) {
             state = pending.remove(event);
@@ -106,29 +102,16 @@ public final class InventoryAuditListener implements Listener {
         try {
             for (int index = 0; index < state.before.size(); index++) {
                 Snapshot before = state.before.get(index);
-                Snapshot after = snapshot(before.inventory);
+                Snapshot after = snapshot(before.block);
                 if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) {
                     continue;
                 }
 
-                final long sequence = index;
-                final Snapshot beforeCopy = before;
-                final Snapshot afterCopy = after;
-                final Actor effectiveActor = actor == null ? Actor.environment() : actor;
-                final String effectiveCause = cause;
-
-                audit.record(beforeCopy.block, ActionType.CONTAINER, effectiveActor,
-                        beforeCopy.snapshot, afterCopy.snapshot, state.transactionId, sequence);
-
-                // The dedicated inventory table is intentionally fed by the same deterministic slot diff
-                // in AuditService/Database. The audit row remains the source of truth for inspection and rollback.
-                if (effectiveCause != null && !effectiveCause.isBlank()) {
-                    // Keep the cause attached to the transaction through the stable transaction id.
-                    // No fake player is ever assigned to automated movement.
-                }
+                audit.record(before.block, ActionType.CONTAINER, actor,
+                        before.snapshot, after.snapshot, state.transactionId, index);
             }
         } catch (RuntimeException ignored) {
-            // Inventory events must never be allowed to break the server event pipeline.
+            // Audit failures must never break a server event pipeline.
         }
     }
 
@@ -138,31 +121,26 @@ public final class InventoryAuditListener implements Listener {
             final BlockState state = inventory.getHolder() instanceof BlockState blockState ? blockState : null;
             if (!(state instanceof Container)) return null;
             final var block = state.getBlock();
-            final BlockSnapshot snapshot = BlockSnapshot.capture(block);
-            final var contents = cloneContents(inventory.getContents());
-            return new Snapshot(block, snapshot, contents);
+            return snapshot(block);
         } catch (RuntimeException ignored) {
             return null;
         }
     }
 
-    private Snapshot snapshot(Block block) {
+    private Snapshot snapshot(org.bukkit.block.Block block) {
         try {
-            if (!(block.getState() instanceof Container)) return null;
+            if (!(block.getState() instanceof Container container)) return null;
             final BlockSnapshot snapshot = BlockSnapshot.capture(block);
-            final Inventory inventory = ((Container) block.getState()).getInventory();
-            return new Snapshot(block, snapshot, cloneContents(inventory.getContents()));
+            return new Snapshot(block, snapshot, cloneContents(container.getInventory().getContents()));
         } catch (RuntimeException ignored) {
             return null;
         }
     }
 
-    private static ItemStack[] cloneContents(org.bukkit.inventory.ItemStack[] source) {
-        if (source == null) return new org.bukkit.inventory.ItemStack[0];
-        org.bukkit.inventory.ItemStack[] copy = new org.bukkit.inventory.ItemStack[source.length];
-        for (int i = 0; i < source.length; i++) {
-            copy[i] = source[i] == null ? null : source[i].clone();
-        }
+    private static ItemStack[] cloneContents(ItemStack[] source) {
+        if (source == null) return new ItemStack[0];
+        ItemStack[] copy = new ItemStack[source.length];
+        for (int i = 0; i < source.length; i++) copy[i] = source[i] == null ? null : source[i].clone();
         return copy;
     }
 
@@ -173,14 +151,9 @@ public final class InventoryAuditListener implements Listener {
     private record PendingEvent(UUID transactionId, List<Snapshot> before) {
     }
 
-    private record Snapshot(org.bukkit.block.Block block, BlockSnapshot snapshot,
-                            org.bukkit.inventory.ItemStack[] inventoryContents) {
+    private record Snapshot(org.bukkit.block.Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) {
         private Snapshot {
             inventoryContents = cloneContents(inventoryContents);
-        }
-
-        private Inventory inventory() {
-            return block.getState() instanceof Container container ? container.getInventory() : null;
         }
     }
 }
