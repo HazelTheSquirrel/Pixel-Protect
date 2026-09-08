@@ -27,15 +27,19 @@ public final class RollbackService {
         this.audit = audit;
     }
 
-    public CompletableFuture<Result> rollback(List<AuditEntry> entries) {
-        if (entries.isEmpty()) {
-            return CompletableFuture.completedFuture(new Result(0, 0));
-        }
+    public CompletableFuture<Result> preview(List<AuditEntry> entries) {
+        return evaluate(entries, false);
+    }
 
+    public CompletableFuture<Result> rollback(List<AuditEntry> entries) {
+        return evaluate(entries, true);
+    }
+
+    private CompletableFuture<Result> evaluate(List<AuditEntry> entries, boolean mutate) {
+        if (entries.isEmpty()) return CompletableFuture.completedFuture(new Result(0, 0));
         final Map<ChunkKey, List<AuditEntry>> byChunk = new HashMap<>();
         for (AuditEntry entry : entries) {
-            final ChunkKey key = new ChunkKey(entry.world(), entry.x() >> 4, entry.z() >> 4);
-            byChunk.computeIfAbsent(key, ignored -> new ArrayList<>()).add(entry);
+            byChunk.computeIfAbsent(new ChunkKey(entry.world(), entry.x() >> 4, entry.z() >> 4), ignored -> new ArrayList<>()).add(entry);
         }
 
         final CompletableFuture<Result> future = new CompletableFuture<>();
@@ -53,24 +57,17 @@ public final class RollbackService {
                 completeIfFinished(future, remaining, applied, skipped);
                 continue;
             }
-
             scheduler.run(plugin, world, key.chunkX(), key.chunkZ(), task -> {
                 for (AuditEntry entry : chunkEntries) {
                     try {
                         final Block block = world.getBlockAt(entry.x(), entry.y(), entry.z());
-                        if (!block.getBlockData().getAsString().equals(entry.afterData())) {
-                            skipped.incrementAndGet();
-                            continue;
+                        if (!matchesRecordedState(block, entry)) { skipped.incrementAndGet(); continue; }
+                        if (mutate) {
+                            final BlockData target = Bukkit.createBlockData(entry.beforeData());
+                            audit.suppress(block);
+                            block.setBlockData(target, false);
+                            restoreInventory(block, entry.beforeInventory());
                         }
-                        if (!inventoryMatches(block, entry.afterInventory())) {
-                            skipped.incrementAndGet();
-                            continue;
-                        }
-
-                        final BlockData target = Bukkit.createBlockData(entry.beforeData());
-                        audit.suppress(block);
-                        block.setBlockData(target, false);
-                        restoreInventory(block, entry.beforeInventory());
                         applied.incrementAndGet();
                     } catch (RuntimeException exception) {
                         skipped.incrementAndGet();
@@ -82,37 +79,29 @@ public final class RollbackService {
         return future;
     }
 
-    private static void completeIfFinished(CompletableFuture<Result> future,
-                                           AtomicInteger remaining,
-                                           AtomicInteger applied,
-                                           AtomicInteger skipped) {
-        if (remaining.decrementAndGet() == 0) {
-            future.complete(new Result(applied.get(), skipped.get()));
-        }
+    private static boolean matchesRecordedState(Block block, AuditEntry entry) {
+        if (!block.getBlockData().getAsString().equals(entry.afterData())) return false;
+        return inventoryMatches(block, entry.afterInventory());
+    }
+
+    private static void completeIfFinished(CompletableFuture<Result> future, AtomicInteger remaining,
+                                           AtomicInteger applied, AtomicInteger skipped) {
+        if (remaining.decrementAndGet() == 0) future.complete(new Result(applied.get(), skipped.get()));
     }
 
     private static boolean inventoryMatches(Block block, byte[] expected) {
-        if (expected == null) {
-            return true;
-        }
+        if (expected == null) return true;
         final var state = block.getState();
-        if (!(state instanceof InventoryHolder holder)) {
-            return false;
-        }
+        if (!(state instanceof InventoryHolder holder)) return false;
         return Arrays.equals(expected, ItemStack.serializeItemsAsBytes(holder.getInventory().getContents()));
     }
 
     private static void restoreInventory(Block block, byte[] data) {
-        if (data == null) {
-            return;
-        }
+        if (data == null) return;
         final var state = block.getState();
-        if (state instanceof InventoryHolder holder) {
-            holder.getInventory().setContents(ItemStack.deserializeItemsFromBytes(data));
-        }
+        if (state instanceof InventoryHolder holder) holder.getInventory().setContents(ItemStack.deserializeItemsFromBytes(data));
     }
 
     private record ChunkKey(UUID world, int chunkX, int chunkZ) {}
-
     public record Result(int applied, int skipped) {}
 }
