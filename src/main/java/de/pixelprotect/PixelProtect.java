@@ -13,6 +13,7 @@ import de.pixelprotect.listener.InventoryAuditListener;
 import de.pixelprotect.listener.ModernMechanicsAuditListener;
 import de.pixelprotect.listener.PlayerAuditListener;
 import de.pixelprotect.listener.PlayerInventoryAuditListener;
+import de.pixelprotect.listener.PlayerMechanicsAuditListener;
 import de.pixelprotect.listener.PlayerTransactionAuditListener;
 import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.AutomationTracker;
@@ -72,6 +73,7 @@ public final class PixelProtect extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new PlayerTransactionAuditListener(audit), this);
         getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit, automation), this);
         getServer().getPluginManager().registerEvents(new PlayerInventoryAuditListener(this, audit), this);
+        getServer().getPluginManager().registerEvents(new PlayerMechanicsAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new EntityForensicsAuditListener(this, audit, getConfig().getBoolean("logging.entity-damage", true)), this);
         getServer().getPluginManager().registerEvents(new ContainerProcessingAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
