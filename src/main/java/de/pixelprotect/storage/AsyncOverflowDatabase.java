@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.PreparedStatement;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -60,6 +61,18 @@ public class AsyncOverflowDatabase extends Database {
         }
         overflowAccepted.incrementAndGet();
         return true;
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<Integer> purgeBefore(long cutoff) {
+        return executeAsync(() -> {
+            flushQueue();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM audit WHERE time < ? AND id NOT IN (SELECT audit_id FROM rollback_job_entries)")) {
+                statement.setLong(1, cutoff);
+                return statement.executeUpdate();
+            }
+        });
     }
 
     public long overflowAccepted() { return overflowAccepted.get(); }
