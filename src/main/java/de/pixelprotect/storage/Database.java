@@ -139,18 +139,14 @@ public final class Database implements AutoCloseable {
                     )
                     """);
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_restores_source ON rollback_restores(source_job_id, created_at DESC)");
-            statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED', error='Server restarted while rollback was running.', finished_at=? WHERE status='RUNNING'");
-            try (PreparedStatement p = connection.prepareStatement("INSERT OR REPLACE INTO pixelprotect_meta(key,value) VALUES('schema_version',?)")) {
-                p.setString(1, "4");
-                p.executeUpdate();
-            }
             version = 4;
         }
+        if (version != SCHEMA_VERSION) throw new SQLException("Unsupported PixelProtect schema version: " + version);
+        statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED', error='Server restarted while rollback was running.', finished_at=" + System.currentTimeMillis() + " WHERE status='RUNNING'");
         try (PreparedStatement update = connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")) {
             update.setString(1, Integer.toString(version));
             update.executeUpdate();
         }
-        if (version != SCHEMA_VERSION) throw new SQLException("Unsupported PixelProtect schema version: " + version);
     }
 
     public boolean record(AuditEntry entry) {
@@ -332,7 +328,7 @@ public final class Database implements AutoCloseable {
     public CompletableFuture<UUID> createRestore(UUID sourceJob) {
         final UUID restoreId = UUID.randomUUID();
         return executeAsync(() -> {
-            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO rollback_restores(id,source_job_id,status,created_at) VALUES(?,?,?,?,?)".replace("?,?,?,?,?", "?,?,?,?"))) {
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO rollback_restores(id,source_job_id,status,created_at) VALUES(?,?,?,?)")) {
                 statement.setString(1, restoreId.toString()); statement.setString(2, sourceJob.toString()); statement.setString(3, "RUNNING"); statement.setLong(4, System.currentTimeMillis()); statement.executeUpdate();
             }
             return restoreId;
