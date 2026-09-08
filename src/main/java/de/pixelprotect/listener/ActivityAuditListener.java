@@ -24,11 +24,15 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.Plugin;
 
-/** Player activity and interaction coverage complementing world/container logging. */
+/** Player activity and interaction coverage. Activity records never masquerade as block-entity snapshots. */
 public final class ActivityAuditListener implements Listener {
     private final Plugin plugin;
     private final AuditService audit;
-    public ActivityAuditListener(Plugin plugin, AuditService audit) { this.plugin = plugin; this.audit = audit; }
+
+    public ActivityAuditListener(Plugin plugin, AuditService audit) {
+        this.plugin = plugin;
+        this.audit = audit;
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onJoin(PlayerJoinEvent event) { recordPlayer(event.getPlayer(), ActionType.SESSION, "LOGIN"); }
@@ -51,10 +55,10 @@ public final class ActivityAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onChat(AsyncChatEvent event) {
-        java.util.UUID uuid = event.getPlayer().getUniqueId();
+        UUIDHolder holder = new UUIDHolder(event.getPlayer().getUniqueId());
         String text = event.message().toString();
         Bukkit.getGlobalRegionScheduler().run(plugin, task -> {
-            Player player = Bukkit.getPlayer(uuid);
+            Player player = Bukkit.getPlayer(holder.uuid());
             if (player != null) recordPlayer(player, ActionType.CHAT, text);
         });
     }
@@ -81,8 +85,9 @@ public final class ActivityAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHangingBreak(HangingBreakEvent event) {
         Entity entity = event.getEntity();
-        if (event.getCause() == HangingBreakEvent.RemoveCause.EXPLOSION)
+        if (event.getCause() == HangingBreakEvent.RemoveCause.EXPLOSION) {
             recordEnvironment(entity.getLocation().getBlock(), ActionType.EXPLOSION, "HANGING:" + entity.getType().getKey());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -90,10 +95,13 @@ public final class ActivityAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot before = BlockSnapshot.capture(block);
         StringBuilder lines = new StringBuilder();
-        for (var line : event.lines()) { if (!lines.isEmpty()) lines.append('\n'); lines.append(safe(line)); }
+        for (var line : event.lines()) {
+            if (!lines.isEmpty()) lines.append('\n');
+            lines.append(safe(line));
+        }
         Bukkit.getRegionScheduler().run(plugin, block.getWorld(), block.getChunk().getX(), block.getChunk().getZ(), task ->
-                audit.recordPlayer(block, ActionType.SIGN, event.getPlayer(), before,
-                        new BlockSnapshot(before.blockData(), before.inventory(), "activity:sign:" + escape(lines.toString()))));
+                audit.recordPlayer(block, ActionType.SIGN, event.getPlayer(), before, BlockSnapshot.capture(block),
+                        "LINES:" + escape(lines), audit.newTransaction(), 0L));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -105,20 +113,23 @@ public final class ActivityAuditListener implements Listener {
         }
     }
 
-    private void recordPlayer(Player player, ActionType action, String detail) { record(player, player.getLocation().getBlock(), action, detail); }
+    private void recordPlayer(Player player, ActionType action, String detail) {
+        record(player, player.getLocation().getBlock(), action, detail);
+    }
+
     private void record(Player player, Block block, ActionType action, String detail) {
         if (player == null || block == null) return;
-        BlockSnapshot snapshot = activitySnapshot(block, detail);
-        audit.recordPlayer(block, action, player, snapshot, snapshot);
+        BlockSnapshot snapshot = BlockSnapshot.capture(block);
+        audit.recordPlayer(block, action, player, snapshot, snapshot, detail, audit.newTransaction(), 0L);
     }
+
     private void recordEnvironment(Block block, ActionType action, String detail) {
         if (block == null) return;
-        BlockSnapshot snapshot = activitySnapshot(block, detail);
-        audit.recordEnvironment(block, action, snapshot, snapshot);
+        BlockSnapshot snapshot = BlockSnapshot.capture(block);
+        audit.recordEnvironment(block, action, snapshot, snapshot, detail, audit.newTransaction(), 0L);
     }
-    private static BlockSnapshot activitySnapshot(Block block, String detail) {
-        return new BlockSnapshot(block.getBlockData().getAsString(), null, "activity:" + escape(detail));
-    }
-    private static String escape(Object value) { return safe(value).replace("\\", "\\\\").replace("\n", "\\n").replace("|", "\\|"); }
+
+    private static String escape(Object value) { return safe(value).replace("\\", "\\\\").replace("\n", "\\n"); }
     private static String safe(Object value) { return value == null ? "" : value.toString().replace('\u0000', ' '); }
+    private record UUIDHolder(java.util.UUID uuid) {}
 }
