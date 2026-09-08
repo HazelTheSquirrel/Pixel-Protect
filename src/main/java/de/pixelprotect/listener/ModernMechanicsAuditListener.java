@@ -55,8 +55,7 @@ public final class ModernMechanicsAuditListener implements Listener {
         UUID transaction = audit.newTransaction();
         long sequence = 0;
         for (BlockState state : event.getBlocks()) {
-            Block block = state.getBlock();
-            audit.recordEnvironment(block, ActionType.FLUID, BlockSnapshot.fromState(state), air(),
+            audit.recordEnvironment(state.getBlock(), ActionType.FLUID, BlockSnapshot.fromState(state), air(),
                     "MECHANISM:SPONGE", transaction, sequence++);
         }
     }
@@ -99,7 +98,8 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot snapshot = BlockSnapshot.capture(block);
         audit.record(block, ActionType.TNT_PRIME, actor(event.getPrimingEntity()), snapshot, snapshot,
-                "CAUSE:" + event.getCause().name(), audit.newTransaction(), 0L);
+                "CAUSE:" + event.getCause().name() + ":BLOCK:" + (event.getPrimingBlock() == null ? "none" : event.getPrimingBlock().getType().getKey()),
+                audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -123,7 +123,7 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot snapshot = BlockSnapshot.capture(block);
         audit.recordEnvironment(block, ActionType.COMPOST, snapshot, snapshot,
-                "ITEM:" + event.getItem().getType().getKey() + ":" + event.getItem().getAmount(), audit.newTransaction(), 0L);
+                "ITEM:" + event.getItem().getType().getKey() + ":" + event.getItem().getAmount() + ":RAISES:" + event.willRaiseLevel(), audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -131,7 +131,7 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot snapshot = BlockSnapshot.capture(block);
         audit.recordEnvironment(block, ActionType.SHEAR, snapshot, snapshot,
-                "ENTITY:" + event.getEntity().getUniqueId(), audit.newTransaction(), 0L);
+                "ENTITY:" + event.getEntity().getUniqueId() + ":DROPS:" + event.getDrops().size(), audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -147,7 +147,7 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot snapshot = BlockSnapshot.capture(block);
         audit.record(block, ActionType.VAULT, actor, snapshot, snapshot,
-                "STATE_CHANGE:" + event.getStateChange().name(), audit.newTransaction(), 0L);
+                "STATE:" + event.getCurrentState().name() + "->" + event.getNewState().name(), audit.newTransaction(), 0L);
     }
 
     private static BlockSnapshot air() { return new BlockSnapshot("minecraft:air", null, null); }
