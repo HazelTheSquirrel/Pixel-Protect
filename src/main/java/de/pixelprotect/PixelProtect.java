@@ -114,11 +114,24 @@ public final class PixelProtect extends JavaPlugin {
     }
 
     private void logDiagnostics() {
-        if (api == null) return;
-        final var d = api.diagnostics();
-        getLogger().info("Diagnose: Warteschlange=" + d.queueSize() + ", Protokolle=" + d.auditCount()
-                + ", Überlauf=" + d.overflowRecords() + ", fehlgeschlagene Rücksetzungen=" + d.failedRollbacks()
-                + ", Schema=" + d.schemaVersion());
+        if (database == null) return;
+        database.count().thenCombine(database.failedRollbackCount(), (auditCount, failedRollbacks) ->
+                "Diagnose: Warteschlange=" + database.queueSize()
+                        + ", Protokolle=" + auditCount
+                        + ", Überlauf=" + overflowCount()
+                        + ", fehlgeschlagene Rücksetzungen=" + failedRollbacks
+                        + ", Schema=" + database.schemaVersion())
+                .thenAccept(getLogger()::info)
+                .exceptionally(failure -> { getLogger().warning("Diagnose konnte nicht vollständig erstellt werden: " + failure.getMessage()); return null; });
+    }
+
+    private long overflowCount() {
+        try {
+            Path file = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"))
+                    .resolveSibling(getConfig().getString("storage.file", "pixelprotect.db") + ".overflow.jsonl");
+            if (!java.nio.file.Files.exists(file)) return 0L;
+            try (var lines = java.nio.file.Files.lines(file)) { return lines.count(); }
+        } catch (Exception ignored) { return -1L; }
     }
 
     private Set<UUID> resolveWorlds(List<String> names) {
