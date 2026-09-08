@@ -18,7 +18,7 @@ public final class MessageService {
             case BREAK -> "Abgebaut"; case PLACE -> "Platziert"; case BURN -> "Verbrannt"; case EXPLOSION -> "Explosion";
             case PISTON -> "Kolbenbewegung"; case FLUID -> "Flüssigkeitsänderung"; case GROW -> "Wachstum"; case FORM -> "Bildung";
             case SPREAD -> "Ausbreitung"; case ENTITY_CHANGE -> "Entitätsänderung"; case BUCKET -> "Eimeraktion"; case CONTAINER -> "Container geändert";
-            case ITEM_DROP -> "Gegenstand fallengelassen"; case ITEM_PICKUP -> "Gegenstand aufgehoben"; case ITEM_DESPAWN -> "Gegenstand verschwunden";
+            case INVENTORY -> "Spielerinventar geändert"; case ITEM_DROP -> "Gegenstand fallengelassen"; case ITEM_PICKUP -> "Gegenstand aufgehoben"; case ITEM_DESPAWN -> "Gegenstand verschwunden";
             case ENTITY_SPAWN -> "Entität gespawnt"; case ENTITY_DEATH -> "Entität gestorben"; case ENTITY_REMOVE -> "Entität entfernt";
             case ENTITY_DAMAGE -> "Entität beschädigt"; case PROJECTILE -> "Projektil"; case INTERACT -> "Interaktion";
             case ENTITY_INTERACT -> "Entitätsinteraktion"; case SIGN -> "Schild geändert"; case CHAT -> "Chat"; case COMMAND -> "Befehl";
