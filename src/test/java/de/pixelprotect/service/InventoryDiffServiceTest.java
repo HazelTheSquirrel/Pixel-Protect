@@ -1,7 +1,5 @@
 package de.pixelprotect.service;
 
-import org.bukkit.Material;
-import org.bukkit.inventory.ItemStack;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,16 +8,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 final class InventoryDiffServiceTest {
     @Test
     void detectsSlotChangesDeterministically() {
-        ItemStack[] before = {ItemStack.of(Material.STONE), null};
-        ItemStack[] after = {ItemStack.of(Material.STONE, 2), ItemStack.of(Material.DIRT, 3)};
+        String[] before = {"stone:1", ""};
+        String[] after = {"stone:2", "dirt:3"};
 
-        String diff = InventoryDiffService.diff(before, after);
+        String diff = InventoryDiffService.diffEncoded(before, after);
 
         assertTrue(diff.contains("\"slot\":0"));
         assertTrue(diff.contains("\"slot\":1"));
-        assertTrue(InventoryDiffService.matches(after, diff, true));
-        assertTrue(InventoryDiffService.matches(before, diff, false));
-        assertFalse(InventoryDiffService.matches(
-                new ItemStack[]{ItemStack.of(Material.STONE, 9), after[1]}, diff, true));
+        assertTrue(InventoryDiffService.matchesEncoded(after, diff, true));
+        assertTrue(InventoryDiffService.matchesEncoded(before, diff, false));
+        assertFalse(InventoryDiffService.matchesEncoded(
+                new String[]{"stone:9", "dirt:3"}, diff, true));
+    }
+
+    @Test
+    void handlesNullAndDifferentLengthInventories() {
+        String diff = InventoryDiffService.diffEncoded(null, new String[]{"stone:1", null, "dirt:2"});
+
+        assertTrue(InventoryDiffService.matchesEncoded(
+                new String[]{"stone:1", null, "dirt:2"}, diff, true));
+        assertTrue(InventoryDiffService.matchesEncoded(null, diff, false));
+        assertFalse(InventoryDiffService.matchesEncoded(
+                new String[]{"stone:1", null}, diff, true));
+    }
+
+    @Test
+    void emptyDiffMatchesAnyInventory() {
+        assertTrue(InventoryDiffService.matchesEncoded(null, null, true));
+        assertTrue(InventoryDiffService.matchesEncoded(new String[]{"stone:1"}, "", false));
+        assertTrue(InventoryDiffService.diffEncoded(null, null).contains("\"changes\":[]"));
     }
 }
