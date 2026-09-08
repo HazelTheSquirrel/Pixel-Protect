@@ -90,7 +90,7 @@ public final class PlayerAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityRemove(EntityRemoveEvent event) {
         var entity = event.getEntity();
-        String cause = event.getRemoveEventCause() == null ? "UNKNOWN" : event.getRemoveEventCause().name();
+        String cause = event.getCause().name();
         audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_REMOVE,
                 new BlockSnapshot(EntitySnapshot.capture(entity, "REMOVE:" + cause, null).serialize(), null),
                 new BlockSnapshot("minecraft:air", null));
