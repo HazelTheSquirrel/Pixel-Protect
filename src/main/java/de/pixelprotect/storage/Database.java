@@ -39,19 +39,23 @@ public final class Database implements AutoCloseable {
 
     public Database(Path file, int queueCapacity, int batchSize, long flushIntervalMillis, Logger logger) {
         this.file = file;
-        this.queue = new ArrayBlockingQueue<>(queueCapacity);
+        this.queue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         this.batchSize = Math.max(1, batchSize);
         this.flushIntervalMillis = Math.max(25L, flushIntervalMillis);
         this.logger = logger;
     }
 
     public void open() throws SQLException, IOException {
-        Files.createDirectories(file.getParent());
+        final Path parent = file.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
         connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
         try (var statement = connection.createStatement()) {
             statement.execute("PRAGMA journal_mode=WAL");
             statement.execute("PRAGMA synchronous=NORMAL");
             statement.execute("PRAGMA foreign_keys=ON");
+            statement.execute("PRAGMA busy_timeout=5000");
             statement.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS audit (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,8 +73,9 @@ public final class Database implements AutoCloseable {
                         after_inventory BLOB
                     )
                     """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_location ON audit(world, x, y, z, time)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit(actor_uuid, time)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_location_time ON audit(world, x, z, time DESC)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_actor_time ON audit(actor_uuid, time DESC)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_action_time ON audit(action, time DESC)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(time)");
         }
         running = true;
@@ -108,6 +113,7 @@ public final class Database implements AutoCloseable {
                                            int limit) throws SQLException {
         final int safeRadius = Math.max(0, radius);
         final int safeLimit = Math.max(1, limit);
+        final long radiusSquared = (long) safeRadius * safeRadius;
         final StringBuilder sql = new StringBuilder("""
                 SELECT id,time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory
                 FROM audit
@@ -115,6 +121,9 @@ public final class Database implements AutoCloseable {
                   AND x BETWEEN ? AND ?
                   AND y BETWEEN ? AND ?
                   AND z BETWEEN ? AND ?
+                  AND ((CAST(x AS INTEGER) - ?) * (CAST(x AS INTEGER) - ?)
+                     + (CAST(y AS INTEGER) - ?) * (CAST(y AS INTEGER) - ?)
+                     + (CAST(z AS INTEGER) - ?) * (CAST(z AS INTEGER) - ?)) <= ?
                   AND time >= ?
                   AND time <= ?
                 """);
@@ -132,6 +141,13 @@ public final class Database implements AutoCloseable {
             statement.setInt(index++, centerY + safeRadius);
             statement.setInt(index++, centerZ - safeRadius);
             statement.setInt(index++, centerZ + safeRadius);
+            statement.setInt(index++, centerX);
+            statement.setInt(index++, centerX);
+            statement.setInt(index++, centerY);
+            statement.setInt(index++, centerY);
+            statement.setInt(index++, centerZ);
+            statement.setInt(index++, centerZ);
+            statement.setLong(index++, radiusSquared);
             statement.setLong(index++, since);
             statement.setLong(index++, until);
             if (actorName != null && !actorName.isBlank()) {
@@ -155,7 +171,23 @@ public final class Database implements AutoCloseable {
                 flushQueue();
                 try (PreparedStatement statement = connection.prepareStatement("DELETE FROM audit WHERE time < ?")) {
                     statement.setLong(1, cutoff);
-                    future.complete(statement.executeUpdate());
+                    final int count = statement.executeUpdate();
+                    future.complete(count);
+                }
+            } catch (Throwable throwable) {
+                future.completeExceptionally(throwable);
+            }
+        });
+        return future;
+    }
+
+    public CompletableFuture<Long> count() {
+        final CompletableFuture<Long> future = new CompletableFuture<>();
+        executor.execute(() -> {
+            try {
+                flushQueue();
+                try (var statement = connection.createStatement(); var result = statement.executeQuery("SELECT COUNT(*) FROM audit")) {
+                    future.complete(result.next() ? result.getLong(1) : 0L);
                 }
             } catch (Throwable throwable) {
                 future.completeExceptionally(throwable);
@@ -184,7 +216,7 @@ public final class Database implements AutoCloseable {
     }
 
     private void flushQueue() {
-        if (queue.isEmpty()) {
+        if (queue.isEmpty() || connection == null) {
             return;
         }
         final List<AuditEntry> batch = new ArrayList<>(batchSize);
