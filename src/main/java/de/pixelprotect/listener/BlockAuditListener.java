@@ -61,9 +61,7 @@ public final class BlockAuditListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
-    public void onBreakBefore(BlockBreakEvent event) {
-        if (placeBreak) singleBefore.put(event, BlockSnapshot.capture(event.getBlock()));
-    }
+    public void onBreakBefore(BlockBreakEvent event) { if (placeBreak) singleBefore.put(event, BlockSnapshot.capture(event.getBlock())); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onBreakAfter(BlockBreakEvent event) {
@@ -71,8 +69,7 @@ public final class BlockAuditListener implements Listener {
         BlockSnapshot before = singleBefore.remove(event);
         if (before == null) return;
         BlockSnapshot after = BlockSnapshot.capture(event.getBlock());
-        if (!same(before, after))
-            audit.recordPlayer(event.getBlock(), ActionType.BREAK, event.getPlayer(), before, after);
+        if (!same(before, after)) audit.recordPlayer(event.getBlock(), ActionType.BREAK, event.getPlayer(), before, after);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -87,14 +84,10 @@ public final class BlockAuditListener implements Listener {
         if (!placeBreak) return;
         List<Block> blocks = new ArrayList<>();
         List<BlockSnapshot> before = new ArrayList<>();
-        for (var state : event.getReplacedBlockStates()) {
-            blocks.add(state.getBlock());
-            before.add(BlockSnapshot.fromState(state));
-        }
+        for (var state : event.getReplacedBlockStates()) { blocks.add(state.getBlock()); before.add(BlockSnapshot.fromState(state)); }
         if (blocks.isEmpty()) return;
         UUID transaction = audit.newTransaction();
-        for (int i = 0; i < blocks.size(); i++)
-            audit.recordPlayer(blocks.get(i), ActionType.PLACE, event.getPlayer(), before.get(i), BlockSnapshot.capture(blocks.get(i)), transaction, i);
+        for (int i = 0; i < blocks.size(); i++) audit.recordPlayer(blocks.get(i), ActionType.PLACE, event.getPlayer(), before.get(i), BlockSnapshot.capture(blocks.get(i)), transaction, i);
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -112,8 +105,7 @@ public final class BlockAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
     public void onEntityExplosionAfter(EntityExplodeEvent event) {
         if (!explosions) return;
-        Actor actor = event.getEntity() instanceof TNTPrimed tnt && tnt.getSource() instanceof Player player
-                ? new Actor(player.getUniqueId(), player.getName()) : Actor.environment();
+        Actor actor = event.getEntity() instanceof TNTPrimed tnt && tnt.getSource() instanceof Player player ? new Actor(player.getUniqueId(), player.getName()) : Actor.environment();
         finishMany(event, actor);
     }
 
@@ -156,8 +148,11 @@ public final class BlockAuditListener implements Listener {
     public void onFluidAfter(BlockFromToEvent event) {
         if (!fluids || !isFluid(event.getBlock().getType())) return;
         BlockSnapshot before = singleBefore.remove(event);
-        if (before != null) audit.recordEnvironment(event.getToBlock(), ActionType.FLUID, before, BlockSnapshot.capture(event.getToBlock()),
-                "SOURCE:" + event.getBlock().getLocation().toBlockVector(), audit.newTransaction(), 0L);
+        if (before != null) {
+            Block source = event.getBlock();
+            String detail = "SOURCE:" + source.getX() + "," + source.getY() + "," + source.getZ() + ":TYPE=" + source.getType().getKey();
+            audit.recordEnvironment(event.getToBlock(), ActionType.FLUID, before, BlockSnapshot.capture(event.getToBlock()), detail, audit.newTransaction(), 0L);
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -189,14 +184,9 @@ public final class BlockAuditListener implements Listener {
 
     private void capturePiston(Object event, List<Block> moved, BlockFace direction) {
         Map<BlockKey, Block> affected = new LinkedHashMap<>();
-        for (Block block : moved) {
-            affected.putIfAbsent(new BlockKey(block), block);
-            Block adjacent = block.getRelative(direction);
-            affected.putIfAbsent(new BlockKey(adjacent), adjacent);
-        }
+        for (Block block : moved) { affected.putIfAbsent(new BlockKey(block), block); affected.putIfAbsent(new BlockKey(block.getRelative(direction)), block.getRelative(direction)); }
         List<Block> blocks = List.copyOf(affected.values());
-        multiBlocks.put(event, blocks);
-        multiBefore.put(event, blocks.stream().map(BlockSnapshot::capture).toList());
+        multiBlocks.put(event, blocks); multiBefore.put(event, blocks.stream().map(BlockSnapshot::capture).toList());
     }
 
     private void finishPiston(Object event) {
@@ -211,8 +201,7 @@ public final class BlockAuditListener implements Listener {
         Map<BlockKey, Block> unique = new LinkedHashMap<>();
         for (Block block : input) unique.putIfAbsent(new BlockKey(block), block);
         List<Block> blocks = List.copyOf(unique.values());
-        multiBlocks.put(event, blocks);
-        multiBefore.put(event, blocks.stream().map(BlockSnapshot::capture).toList());
+        multiBlocks.put(event, blocks); multiBefore.put(event, blocks.stream().map(BlockSnapshot::capture).toList());
     }
 
     private void finishMany(Object event, Actor actor) {
@@ -238,9 +227,7 @@ public final class BlockAuditListener implements Listener {
     }
 
     private static boolean same(BlockSnapshot a, BlockSnapshot b) {
-        return a.blockData().equals(b.blockData())
-                && java.util.Arrays.equals(a.inventory(), b.inventory())
-                && java.util.Objects.equals(a.blockEntity(), b.blockEntity());
+        return a.blockData().equals(b.blockData()) && java.util.Arrays.equals(a.inventory(), b.inventory()) && java.util.Objects.equals(a.blockEntity(), b.blockEntity());
     }
 
     private static boolean isFluid(Material material) { return material == Material.WATER || material == Material.LAVA; }
