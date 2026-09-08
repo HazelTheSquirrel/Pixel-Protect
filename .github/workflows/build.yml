@@ -70,6 +70,28 @@ jobs:
 
           echo 'PixelProtect artifact validation passed.'
 
+      - name: Paper 26.2 startup smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p integration-server/plugins
+          cp build/libs/PixelProtect.jar integration-server/plugins/PixelProtect.jar
+          printf 'eula=true\n' > integration-server/eula.txt
+          curl --fail --silent --show-error --location \
+            'https://api.papermc.io/v2/projects/paper/versions/26.2/builds/121/downloads/paper-26.2-121.jar' \
+            --output integration-server/paper.jar
+          (cd integration-server && java -Xms512M -Xmx1G -jar paper.jar --nogui > server.log 2>&1 & echo $! > server.pid)
+          for i in $(seq 1 90); do
+            if grep -q 'Done (' integration-server/server.log 2>/dev/null; then break; fi
+            if grep -q 'Failed to load' integration-server/server.log 2>/dev/null; then cat integration-server/server.log; exit 1; fi
+            sleep 2
+          done
+          grep -q 'Done (' integration-server/server.log
+          grep -q 'PixelProtect enabled' integration-server/server.log
+          kill "$(cat integration-server/server.pid)" || true
+          sleep 2
+          tail -n 200 integration-server/server.log
+
       - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
