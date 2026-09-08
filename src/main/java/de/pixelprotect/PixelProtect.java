@@ -3,11 +3,13 @@ package de.pixelprotect;
 import de.pixelprotect.api.PixelProtectApi;
 import de.pixelprotect.api.PixelProtectApiImpl;
 import de.pixelprotect.command.PixelProtectCommand;
+import de.pixelprotect.listener.AutomationAuditListener;
 import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.InspectListener;
 import de.pixelprotect.listener.InventoryAuditListener;
 import de.pixelprotect.listener.PlayerAuditListener;
 import de.pixelprotect.service.AuditService;
+import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InspectService;
 import de.pixelprotect.service.RollbackService;
 import de.pixelprotect.storage.Database;
@@ -67,6 +69,7 @@ public final class PixelProtect extends JavaPlugin {
                 databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
         getServer().getServicesManager().register(PixelProtectApi.class, api, this, ServicePriority.Normal);
 
+        final AutomationTracker automation = new AutomationTracker();
         final InspectService inspect = new InspectService(database);
         final RollbackService rollback = new RollbackService(this, audit, database);
         getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
@@ -78,8 +81,9 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.growth", true),
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
-        getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit), this);
-        getServer().getPluginManager().registerEvents(new InspectListener(this, inspect), this);
+        getServer().getPluginManager().registerEvents(new InventoryAuditListener(audit, automation), this);
+        getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
+        getServer().getPluginManager().registerEvents(new InspectListener(this, inspect, automation), this);
 
         final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect,
                 getConfig().getInt("rollback.max-hours", 168),
