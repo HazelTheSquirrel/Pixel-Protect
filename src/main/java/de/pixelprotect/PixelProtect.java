@@ -3,6 +3,7 @@ package de.pixelprotect;
 import de.pixelprotect.command.PixelProtectCommand;
 import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.InspectListener;
+import de.pixelprotect.listener.InventoryAuditListener;
 import de.pixelprotect.listener.PlayerAuditListener;
 import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.InspectService;
@@ -43,6 +44,7 @@ public final class PixelProtect extends JavaPlugin {
         final RollbackService rollback = new RollbackService(this, audit);
         getServer().getPluginManager().registerEvents(new BlockAuditListener(audit), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(audit), this);
+        getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new InspectListener(this, inspect), this);
 
         final PixelProtectCommand command = new PixelProtectCommand(
