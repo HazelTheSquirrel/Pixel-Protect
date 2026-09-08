@@ -16,13 +16,16 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerTakeLecternBookEvent;
 import org.bukkit.inventory.ItemStack;
 
+/** Player transactions that are meaningful forensic events but are not block-state mutations. */
 public final class PlayerTransactionAuditListener implements Listener {
     private final AuditService audit;
+
     public PlayerTransactionAuditListener(AuditService audit) { this.audit = audit; }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCraft(ItemCraftedEvent event) {
-        Player player = event.getPlayer(); ItemStack item = event.getCraftedItem();
+        Player player = event.getPlayer();
+        ItemStack item = event.getCraftedItem();
         record(player, player.getLocation().getBlock(), ActionType.CRAFT, "CRAFT:" + item.getType().getKey() + ":" + item.getAmount());
     }
 
@@ -58,7 +61,7 @@ public final class PlayerTransactionAuditListener implements Listener {
 
     private void record(Player player, Block block, ActionType action, String detail) {
         if (player == null || block == null) return;
-        BlockSnapshot snapshot = new BlockSnapshot(block.getBlockData().getAsString(), null, "activity:" + detail);
-        audit.recordPlayer(block, action, player, snapshot, snapshot);
+        BlockSnapshot snapshot = BlockSnapshot.capture(block);
+        audit.recordPlayer(block, action, player, snapshot, snapshot, detail, audit.newTransaction(), 0L);
     }
 }
