@@ -9,6 +9,7 @@ import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.ContainerProcessingAuditListener;
 import de.pixelprotect.listener.InspectListener;
 import de.pixelprotect.listener.InventoryAuditListener;
+import de.pixelprotect.listener.ModernMechanicsAuditListener;
 import de.pixelprotect.listener.PlayerAuditListener;
 import de.pixelprotect.listener.PlayerTransactionAuditListener;
 import de.pixelprotect.service.AuditService;
@@ -72,6 +73,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.fire", true), getConfig().getBoolean("logging.piston", true),
                 getConfig().getBoolean("logging.fluids", true), getConfig().getBoolean("logging.growth", true),
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
+        getServer().getPluginManager().registerEvents(new ModernMechanicsAuditListener(audit), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new ActivityAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new PlayerTransactionAuditListener(audit), this);
