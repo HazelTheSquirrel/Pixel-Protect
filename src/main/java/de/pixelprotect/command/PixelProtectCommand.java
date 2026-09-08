@@ -87,10 +87,13 @@ public final class PixelProtectCommand {
         final SelectorParser.Parsed parsed = SelectorParser.parse(tokens(rawSelectors), defaultRadius, defaultHours, maxRadius, maxHours);
         if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
         final AuditQuery query = query(location, parsed);
-        database.query(query).thenAccept(entries -> {
-            if (parsed.countOnly()) send(source.getSender(), "PixelProtect: " + entries.size() + " matching audit record(s).");
-            else sendLookup(source.getSender(), entries);
-        }).exceptionally(t -> { send(source.getSender(), "PixelProtect: lookup failed — " + rootMessage(t)); return null; });
+        if (parsed.countOnly()) {
+            database.count(query).thenAccept(count -> send(source.getSender(), "PixelProtect: " + count + " matching audit record(s)."))
+                    .exceptionally(t -> { send(source.getSender(), "PixelProtect: lookup failed — " + rootMessage(t)); return null; });
+        } else {
+            database.query(query).thenAccept(entries -> sendLookup(source.getSender(), entries))
+                    .exceptionally(t -> { send(source.getSender(), "PixelProtect: lookup failed — " + rootMessage(t)); return null; });
+        }
         source.getSender().sendPlainMessage("PixelProtect: querying audit history...");
         return Command.SINGLE_SUCCESS;
     }
@@ -101,13 +104,15 @@ public final class PixelProtectCommand {
         final SelectorParser.Parsed parsed = SelectorParser.parse(tokens(rawSelectors), defaultRadius, defaultHours, maxRadius, maxHours);
         if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
         final CommandSender sender = source.getSender();
-        database.query(query(location, parsed)).thenCompose(entries -> {
+        final AuditQuery query = query(location, parsed);
+        if (parsed.countOnly()) {
+            database.count(query).thenAccept(count -> send(sender, "PixelProtect: " + count + " matching audit record(s)."))
+                    .exceptionally(t -> { send(sender, "PixelProtect: count failed — " + rootMessage(t)); return null; });
+            return Command.SINGLE_SUCCESS;
+        }
+        database.query(query).thenCompose(entries -> {
             if (entries.isEmpty()) {
                 send(sender, parsed.preview() ? "PixelProtect: preview found no matching records." : "PixelProtect: nothing to rollback.");
-                return CompletableFuture.completedFuture(new RollbackService.Result(0, 0));
-            }
-            if (parsed.countOnly()) {
-                send(sender, "PixelProtect: " + entries.size() + " matching audit record(s).");
                 return CompletableFuture.completedFuture(new RollbackService.Result(0, 0));
             }
             if (parsed.preview()) {
@@ -118,7 +123,7 @@ public final class PixelProtectCommand {
             return rollback.rollback(entries);
         }).thenAccept(result -> {
             if (parsed.preview()) send(sender, "PixelProtect: preview complete. Would apply " + result.applied() + ", skip " + result.skipped() + ".");
-            else if (!parsed.countOnly()) send(sender, "PixelProtect: rollback complete. Applied " + result.applied() + ", skipped " + result.skipped() + ".");
+            else send(sender, "PixelProtect: rollback complete. Applied " + result.applied() + ", skipped " + result.skipped() + ".");
         }).exceptionally(t -> { send(sender, "PixelProtect: operation failed — " + rootMessage(t)); return null; });
         return Command.SINGLE_SUCCESS;
     }
@@ -148,7 +153,8 @@ public final class PixelProtectCommand {
         sender.sendPlainMessage("PixelProtect: /pixelprotect inspect");
         sender.sendPlainMessage("PixelProtect: /pixelprotect lookup <radius> <hours> [u:<player>] [r:<radius>] [t:<time>] [a:<actions>] [i:<blocks>] [e:<blocks>] [#count]");
         sender.sendPlainMessage("PixelProtect: /pixelprotect rollback <radius> <hours> [selectors] [#preview]");
-        sender.sendPlainMessage("PixelProtect: time accepts m/h/d; actions include BREAK, PLACE, EXPLOSION, FORM, GROW, SPREAD, FLUID, ENTITY_CHANGE and PISTON.");
+        sender.sendPlainMessage("PixelProtect: actions include BREAK, PLACE, BURN, EXPLOSION, PISTON, FLUID, GROW, FORM, SPREAD, ENTITY_CHANGE, BUCKET and CONTAINER.");
+        sender.sendPlainMessage("PixelProtect: prefix an action with '-' inside a:<...> to exclude it.");
         return Command.SINGLE_SUCCESS;
     }
 
