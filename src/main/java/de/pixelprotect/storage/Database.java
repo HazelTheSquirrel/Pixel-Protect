@@ -26,7 +26,6 @@ import java.util.logging.Logger;
 
 public final class Database implements AutoCloseable {
     private static final int SCHEMA_VERSION = 2;
-
     private final Path file;
     private final Logger logger;
     private final int batchSize;
@@ -37,7 +36,6 @@ public final class Database implements AutoCloseable {
         thread.setDaemon(true);
         return thread;
     });
-
     private Connection connection;
     private volatile boolean running;
 
@@ -99,7 +97,7 @@ public final class Database implements AutoCloseable {
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_action_time ON audit(world, action, time DESC)");
             version = 2;
         }
-        try (PreparedStatement update = connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")) {
+        try (PreparedStatement update = connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")) {
             update.setString(1, Integer.toString(version));
             update.executeUpdate();
         }
@@ -117,12 +115,8 @@ public final class Database implements AutoCloseable {
     public CompletableFuture<List<AuditEntry>> query(AuditQuery query) {
         final CompletableFuture<List<AuditEntry>> future = new CompletableFuture<>();
         executor.execute(() -> {
-            try {
-                flushQueue();
-                future.complete(queryBlocking(query));
-            } catch (Throwable throwable) {
-                future.completeExceptionally(throwable);
-            }
+            try { flushQueue(); future.complete(queryBlocking(query)); }
+            catch (Throwable throwable) { future.completeExceptionally(throwable); }
         });
         return future;
     }
@@ -149,7 +143,6 @@ public final class Database implements AutoCloseable {
         params.add(query.centerX()); params.add(query.centerX()); params.add(query.centerY()); params.add(query.centerY());
         params.add(query.centerZ()); params.add(query.centerZ()); params.add(radiusSquared);
         params.add(query.since()); params.add(query.until());
-
         if (query.actorName() != null && !query.actorName().isBlank()) { sql.append(" AND actor_name=?"); params.add(query.actorName()); }
         appendActions(sql, params, query.includeActions(), true);
         appendActions(sql, params, query.excludeActions(), false);
@@ -157,7 +150,6 @@ public final class Database implements AutoCloseable {
         appendBlocks(sql, params, query.excludeBlocks(), true);
         sql.append(" ORDER BY time DESC,id DESC LIMIT ?");
         params.add(query.limit());
-
         try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
             for (int i = 0; i < params.size(); i++) setParameter(statement, i + 1, params.get(i));
             try (ResultSet result = statement.executeQuery()) {
@@ -180,8 +172,7 @@ public final class Database implements AutoCloseable {
     private static void appendBlocks(StringBuilder sql, List<Object> params, java.util.Set<String> blocks, boolean exclude) {
         for (String block : blocks) {
             sql.append(exclude ? " AND before_data NOT LIKE ? AND after_data NOT LIKE ?" : " AND (before_data LIKE ? OR after_data LIKE ?)");
-            params.add(block + "%");
-            params.add(block + "%");
+            params.add(block + "%"); params.add(block + "%");
         }
     }
 
@@ -195,8 +186,7 @@ public final class Database implements AutoCloseable {
         return executeAsync(() -> {
             flushQueue();
             try (PreparedStatement statement = connection.prepareStatement("DELETE FROM audit WHERE time < ?")) {
-                statement.setLong(1, cutoff);
-                return statement.executeUpdate();
+                statement.setLong(1, cutoff); return statement.executeUpdate();
             }
         });
     }
@@ -251,8 +241,7 @@ public final class Database implements AutoCloseable {
                 if (entry.actor() == null) statement.setNull(i++, Types.VARCHAR); else statement.setString(i++, entry.actor().toString());
                 statement.setString(i++, entry.actorName()); statement.setString(i++, entry.action().name());
                 statement.setString(i++, entry.beforeData()); statement.setString(i++, entry.afterData());
-                statement.setBytes(i++, entry.beforeInventory()); statement.setBytes(i, entry.afterInventory());
-                statement.addBatch();
+                statement.setBytes(i++, entry.beforeInventory()); statement.setBytes(i, entry.afterInventory()); statement.addBatch();
             }
             statement.executeBatch(); connection.commit();
         } catch (SQLException exception) { connection.rollback(); throw exception; }
