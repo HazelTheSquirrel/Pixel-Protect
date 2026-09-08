@@ -2,7 +2,10 @@ package de.pixelprotect.listener;
 
 import de.pixelprotect.model.AuditEntry;
 import de.pixelprotect.service.InspectService;
+import de.pixelprotect.service.InventoryDiffService;
 import de.pixelprotect.service.MessageService;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -30,37 +33,80 @@ public final class InspectListener implements Listener {
         final int y = block.getY();
         final int z = block.getZ();
         final String world = block.getWorld().getName();
+        final var worldId = block.getWorld().getUID();
 
-        inspect.lookup(player).thenAccept(entries -> player.getScheduler().run(plugin, task -> {
-            player.sendPlainMessage("§8§m────────────────────────────────");
-            player.sendPlainMessage("§6§lPixelProtect §7– §eBlock-Inspektion");
-            player.sendPlainMessage("§7Welt: §f" + world);
-            player.sendPlainMessage("§7Koordinaten: §f" + MessageService.coordinates(x, y, z));
-            player.sendPlainMessage("§7Block: §f" + block.getType().translationKey());
-            player.sendPlainMessage("§8§m────────────────────────────────");
+        inspect.lookup(worldId, x, y, z).thenAccept(entries -> player.getScheduler().run(plugin, task -> {
+            if (!player.isOnline()) return;
+            Component message = Component.empty()
+                    .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY))
+                    .append(Component.newline())
+                    .append(Component.text("PixelProtect", NamedTextColor.GOLD))
+                    .append(Component.text(" – ", NamedTextColor.GRAY))
+                    .append(Component.text("Block-Inspektion", NamedTextColor.YELLOW))
+                    .append(Component.newline())
+                    .append(Component.text("Welt: ", NamedTextColor.GRAY))
+                    .append(Component.text(world, NamedTextColor.WHITE))
+                    .append(Component.newline())
+                    .append(Component.text("Koordinaten: ", NamedTextColor.GRAY))
+                    .append(Component.text(MessageService.coordinates(x, y, z), NamedTextColor.WHITE))
+                    .append(Component.newline())
+                    .append(Component.text("Block: ", NamedTextColor.GRAY))
+                    .append(Component.text(block.getType().translationKey(), NamedTextColor.WHITE))
+                    .append(Component.newline())
+                    .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY));
 
             if (entries.isEmpty()) {
-                player.sendPlainMessage("§eKeine gespeicherten Änderungen für diesen Block gefunden.");
-                player.sendPlainMessage("§8§m────────────────────────────────");
-                return;
+                message = message.append(Component.newline())
+                        .append(Component.text("Keine gespeicherten Änderungen für diesen Block gefunden.", NamedTextColor.YELLOW));
+            } else {
+                message = message.append(Component.newline())
+                        .append(Component.text("Gefundene Einträge: ", NamedTextColor.GRAY))
+                        .append(Component.text(Integer.toString(Math.min(entries.size(), 10)), NamedTextColor.WHITE));
+                for (AuditEntry entry : entries.stream().limit(10).toList()) {
+                    message = message.append(entryComponent(entry));
+                }
+                if (entries.size() > 10) {
+                    message = message.append(Component.newline())
+                            .append(Component.text("Weitere Einträge sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
+                }
             }
 
-            player.sendPlainMessage("§7Gefundene Einträge: §f" + entries.size());
-            entries.stream().limit(10).forEach(entry -> sendEntry(player, entry));
-            if (entries.size() > 10) {
-                player.sendPlainMessage("§8Weitere Einträge sind vorhanden, es werden maximal 10 angezeigt.");
-            }
-            player.sendPlainMessage("§8§m────────────────────────────────");
+            message = message.append(Component.newline())
+                    .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY));
+            player.sendMessage(message);
         }, null));
     }
 
-    private static void sendEntry(org.bukkit.entity.Player player, AuditEntry entry) {
+    private static Component entryComponent(AuditEntry entry) {
         final String actor = entry.actorName() == null || entry.actorName().isBlank()
                 ? "Unbekannt"
                 : entry.actorName();
-        player.sendPlainMessage("§e#" + entry.id() + " §7• §f" + actor);
-        player.sendPlainMessage("  §7Aktion: §f" + MessageService.action(entry.action()));
-        player.sendPlainMessage("  §7Zeit: §f" + MessageService.time(entry.time()));
-        player.sendPlainMessage("  §7Koordinaten: §f" + MessageService.coordinates(entry));
+        Component result = Component.newline()
+                .append(Component.text("#" + entry.id(), NamedTextColor.YELLOW))
+                .append(Component.text(" • ", NamedTextColor.GRAY))
+                .append(Component.text(actor, NamedTextColor.WHITE))
+                .append(Component.newline())
+                .append(Component.text("  Aktion: ", NamedTextColor.GRAY))
+                .append(Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE))
+                .append(Component.newline())
+                .append(Component.text("  Zeit: ", NamedTextColor.GRAY))
+                .append(Component.text(MessageService.time(entry.time()), NamedTextColor.WHITE))
+                .append(Component.newline())
+                .append(Component.text("  Koordinaten: ", NamedTextColor.GRAY))
+                .append(Component.text(MessageService.coordinates(entry), NamedTextColor.WHITE));
+
+        final var changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
+        if (!changes.isEmpty()) {
+            result = result.append(Component.newline())
+                    .append(Component.text("  Änderungen:", NamedTextColor.GRAY));
+            for (InventoryDiffService.ItemChange change : changes) {
+                final String prefix = change.amount() > 0 ? "+ " : "− ";
+                result = result.append(Component.newline())
+                        .append(Component.text("    " + prefix + Math.abs(change.amount()) + " × ",
+                                change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED))
+                        .append(change.displayName());
+            }
+        }
+        return result;
     }
 }
