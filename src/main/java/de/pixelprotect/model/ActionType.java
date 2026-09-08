@@ -20,5 +20,11 @@ public enum ActionType {
     ENTITY_DEATH,
     ENTITY_REMOVE,
     ENTITY_DAMAGE,
-    PROJECTILE
+    PROJECTILE,
+    INTERACT,
+    ENTITY_INTERACT,
+    SIGN,
+    CHAT,
+    COMMAND,
+    SESSION
 }
