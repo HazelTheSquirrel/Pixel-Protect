@@ -11,6 +11,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.List;
 
 public final class PixelProtect extends JavaPlugin {
     private Database database;
@@ -46,9 +47,11 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getInt("rollback.max-hours", 168),
                 getConfig().getInt("rollback.max-radius", 128),
                 getConfig().getInt("rollback.max-records", 100_000));
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands ->
-                commands.registrar().register(command.create().build(),
-                        "Audit and rollback world changes", java.util.List.of("pp")));
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands -> {
+            final var builder = command.create().build();
+            commands.registrar().register(builder,
+                    "Audit and rollback world changes", List.of("pp", "co"));
+        });
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
