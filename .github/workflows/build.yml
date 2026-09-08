@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          forbidden_legacy='org\.bukkit\.ChatColor|net\.md_5\.bungee\.api\.ChatColor|net\.minecraft\.server\.v[0-9_]+|org\.bukkit\.craftbukkit'
+          forbidden_legacy='org\\.bukkit\\.ChatColor|net\\.md_5\\.bungee\\.api\\.ChatColor|net\\.minecraft\\.server\\.v[0-9_]+|org\\.bukkit\\.craftbukkit'
           if grep -RInE --include='*.java' "$forbidden_legacy" src/main/java; then
             echo 'Forbidden legacy API usage detected.'
             exit 1
@@ -77,9 +77,21 @@ jobs:
           mkdir -p integration-server/plugins
           cp build/libs/PixelProtect.jar integration-server/plugins/PixelProtect.jar
           printf 'eula=true\n' > integration-server/eula.txt
+
+          paper_user_agent='PixelProtect-CI/1.0.0 (https://github.com/HazelTheSquirrel/Pixel-Protect)'
+          builds_json="$(curl --fail --silent --show-error --location \
+            --header "User-Agent: ${paper_user_agent}" \
+            'https://fill.papermc.io/v3/projects/paper/versions/26.2/builds')"
+
+          paper_url="$(printf '%s' "$builds_json" | jq -er \
+            'first(.[] | select(.id == 121 and .channel == "STABLE") | .downloads["server:default"].url)')"
+
+          test -n "$paper_url"
           curl --fail --silent --show-error --location \
-            'https://api.papermc.io/v2/projects/paper/versions/26.2/builds/121/downloads/paper-26.2-121.jar' \
+            --header "User-Agent: ${paper_user_agent}" \
+            "$paper_url" \
             --output integration-server/paper.jar
+
           (cd integration-server && java -Xms512M -Xmx1G -jar paper.jar --nogui > server.log 2>&1 & echo $! > server.pid)
           for i in $(seq 1 90); do
             if grep -q 'Done (' integration-server/server.log 2>/dev/null; then break; fi
