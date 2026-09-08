@@ -5,6 +5,7 @@ import de.pixelprotect.model.Actor;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
 import org.bukkit.Bukkit;
+import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.event.EventHandler;
@@ -33,7 +34,7 @@ public final class BlockAuditListener implements Listener {
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onSpread(BlockSpreadEvent e){if(growth)recordAfter(e.getBlock(),ActionType.SPREAD,Actor.environment());}
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFertilize(BlockFertilizeEvent e){if(!growth)return;Actor a=e.getPlayer()==null?Actor.environment():new Actor(e.getPlayer().getUniqueId(),e.getPlayer().getName());recordStates(e.getBlocks(),ActionType.GROW,a);}
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onStructureGrow(StructureGrowEvent e){if(!growth)return;Actor a=e.getPlayer()==null?Actor.environment():new Actor(e.getPlayer().getUniqueId(),e.getPlayer().getName());recordStates(e.getBlocks(),ActionType.GROW,a);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFluid(BlockFromToEvent e){if(!fluids||!e.getBlock().getType().isLiquid())return;Block b=e.getToBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEnvironment(b,ActionType.FLUID,before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFluid(BlockFromToEvent e){if(!fluids||!Tag.FLUIDS.isTagged(e.getBlock().getType()))return;Block b=e.getToBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEnvironment(b,ActionType.FLUID,before,BlockSnapshot.capture(b)));}
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onEntityChange(EntityChangeBlockEvent e){if(!entityChanges)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEntity(b,ActionType.ENTITY_CHANGE,e.getEntity(),before,BlockSnapshot.capture(b)));}
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onEntityForm(EntityBlockFormEvent e){if(!entityChanges)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEntity(b,ActionType.FORM,e.getEntity(),before,BlockSnapshot.capture(b)));}
     @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onPistonExtend(BlockPistonExtendEvent e){if(piston)recordPiston(e.getBlocks(),e.getDirection());}
