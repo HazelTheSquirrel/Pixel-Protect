@@ -29,9 +29,9 @@ public final class PixelProtectApiImpl implements PixelProtectApi {
     @Override public boolean isWorldIncluded(UUID world) { return includedWorlds.isEmpty() || includedWorlds.contains(world); }
     @Override public Diagnostics diagnostics() {
         long overflow = 0;
-        try { if (Files.exists(overflowFile)) overflow = Files.lines(overflowFile).count(); } catch (Exception ignored) { }
-        return new Diagnostics(running, database.queueSize(), database.schemaVersion(), database.count().join(),
-                retentionPurged, overflow, database.failedRollbackCount().join());
+        try { if (Files.exists(overflowFile)) try (var lines = Files.lines(overflowFile)) { overflow = lines.count(); } }
+        catch (Exception ignored) { }
+        return new Diagnostics(running, database.queueSize(), database.schemaVersion(), database.count().join(), retentionPurged, overflow, 0L);
     }
     @Override public void registerProtectionAttributor(ProtectionAttributor attributor) { if (attributor != null) attributors.addIfAbsent(attributor); }
     @Override public void unregisterProtectionAttributor(ProtectionAttributor attributor) { attributors.remove(attributor); }
