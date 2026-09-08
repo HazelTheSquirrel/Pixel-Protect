@@ -16,15 +16,19 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Tracks player-owned automation mechanisms and reconstructs the direct mechanism involved in
  * automated inventory transfers. Attribution is explicitly indirect: the owner is only used when
- * the mechanism itself was placed by that player and the transfer endpoint is that mechanism.
+ * the mechanism itself was placed by that player and the transfer endpoint proves the mechanism.
  */
 public final class AutomationTracker {
+    private static final long TRANSFER_CONTEXT_TTL_MILLIS = 10 * 60_000L;
+    private static final int MAX_TRANSFER_CONTEXTS = 10_000;
+
     private final Map<BlockKey, Mechanism> mechanisms = new ConcurrentHashMap<>();
     private final Map<UUID, TransferContext> transfers = new ConcurrentHashMap<>();
 
     public void recordPlacement(Block block, Player player) {
         if (block == null || player == null || !isMechanism(block.getType())) return;
-        mechanisms.put(new BlockKey(block), new Mechanism(block.getType(), new Actor(player.getUniqueId(), player.getName()), System.currentTimeMillis()));
+        mechanisms.put(new BlockKey(block), new Mechanism(block.getType(),
+                new Actor(player.getUniqueId(), player.getName()), System.currentTimeMillis()));
     }
 
     public void recordRemoval(Block block) {
@@ -33,6 +37,7 @@ public final class AutomationTracker {
 
     public TransferContext trackTransfer(UUID transactionId, Inventory source, Inventory destination) {
         if (transactionId == null) return null;
+        cleanupTransfers();
         Block sourceBlock = blockOf(source);
         Block destinationBlock = blockOf(destination);
         Block mechanismBlock = null;
@@ -48,21 +53,41 @@ public final class AutomationTracker {
         if (mechanism == null) return null;
 
         TransferContext context = new TransferContext(transactionId, location(sourceBlock), location(destinationBlock),
-                location(mechanismBlock), mechanism.type(), mechanism.owner(), "Hopper-Automatik");
+                location(mechanismBlock), mechanism.type(), mechanism.owner(), "Hopper-Automatik", System.currentTimeMillis());
+        if (transfers.size() >= MAX_TRANSFER_CONTEXTS) cleanupOldest();
         transfers.put(transactionId, context);
         return context;
     }
 
     public TransferContext context(UUID transactionId) {
-        return transactionId == null ? null : transfers.get(transactionId);
-    }
-
-    public void forget(UUID transactionId) {
-        if (transactionId != null) transfers.remove(transactionId);
+        if (transactionId == null) return null;
+        TransferContext context = transfers.get(transactionId);
+        if (context == null || System.currentTimeMillis() - context.time() > TRANSFER_CONTEXT_TTL_MILLIS) {
+            if (context != null) transfers.remove(transactionId, context);
+            return null;
+        }
+        return context;
     }
 
     public int trackedMechanisms() {
         return mechanisms.size();
+    }
+
+    private void cleanupTransfers() {
+        long cutoff = System.currentTimeMillis() - TRANSFER_CONTEXT_TTL_MILLIS;
+        transfers.entrySet().removeIf(entry -> entry.getValue().time() < cutoff);
+    }
+
+    private void cleanupOldest() {
+        UUID oldestId = null;
+        long oldest = Long.MAX_VALUE;
+        for (Map.Entry<UUID, TransferContext> entry : transfers.entrySet()) {
+            if (entry.getValue().time() < oldest) {
+                oldest = entry.getValue().time();
+                oldestId = entry.getKey();
+            }
+        }
+        if (oldestId != null) transfers.remove(oldestId);
     }
 
     private static boolean isMechanism(Material material) {
@@ -89,7 +114,7 @@ public final class AutomationTracker {
     public record LocationData(UUID world, int x, int y, int z) {}
 
     public record TransferContext(UUID transactionId, LocationData source, LocationData destination,
-                                  LocationData mechanism, Material mechanismType, Actor owner, String cause) {
+                                  LocationData mechanism, Material mechanismType, Actor owner, String cause, long time) {
         public Actor attributedActor() {
             return owner == null ? Actor.environment() : owner;
         }
