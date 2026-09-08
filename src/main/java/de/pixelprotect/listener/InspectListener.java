@@ -1,6 +1,7 @@
 package de.pixelprotect.listener;
 
 import de.pixelprotect.model.AuditEntry;
+import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InspectService;
 import de.pixelprotect.service.InventoryDiffService;
 import de.pixelprotect.service.MessageService;
@@ -15,10 +16,12 @@ import org.bukkit.plugin.Plugin;
 public final class InspectListener implements Listener {
     private final Plugin plugin;
     private final InspectService inspect;
+    private final AutomationTracker automation;
 
-    public InspectListener(Plugin plugin, InspectService inspect) {
+    public InspectListener(Plugin plugin, InspectService inspect, AutomationTracker automation) {
         this.plugin = plugin;
         this.inspect = inspect;
+        this.automation = automation;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -63,7 +66,7 @@ public final class InspectListener implements Listener {
                         .append(Component.text("Gefundene Einträge: ", NamedTextColor.GRAY))
                         .append(Component.text(Integer.toString(Math.min(entries.size(), 10)), NamedTextColor.WHITE));
                 for (AuditEntry entry : entries.stream().limit(10).toList()) {
-                    message = message.append(entryComponent(entry));
+                    message = message.append(entryComponent(entry, automation.context(entry.transactionId())));
                 }
                 if (entries.size() > 10) {
                     message = message.append(Component.newline())
@@ -77,10 +80,8 @@ public final class InspectListener implements Listener {
         }, null));
     }
 
-    private static Component entryComponent(AuditEntry entry) {
-        final String actor = entry.actorName() == null || entry.actorName().isBlank()
-                ? "Unbekannt"
-                : entry.actorName();
+    private static Component entryComponent(AuditEntry entry, AutomationTracker.TransferContext context) {
+        final String actor = entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName();
         Component result = Component.newline()
                 .append(Component.text("#" + entry.id(), NamedTextColor.YELLOW))
                 .append(Component.text(" • ", NamedTextColor.GRAY))
@@ -107,6 +108,37 @@ public final class InspectListener implements Listener {
                         .append(change.displayName());
             }
         }
+
+        if (context != null) {
+            result = result.append(Component.newline())
+                    .append(Component.text("  Ursache: ", NamedTextColor.GRAY))
+                    .append(Component.text(context.cause(), NamedTextColor.YELLOW));
+            if (context.owner() != null) {
+                result = result.append(Component.newline())
+                        .append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY))
+                        .append(Component.text(context.owner().name(), NamedTextColor.WHITE));
+            }
+            result = appendLocation(result, "Quelle", context.source())
+                    .appendLocation("Ziel", context.destination());
+            if (context.mechanism() != null) {
+                result = result.append(Component.newline())
+                        .append(Component.text("  Mechanismus: ", NamedTextColor.GRAY))
+                        .append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE))
+                        .append(Component.text(" @ ", NamedTextColor.GRAY))
+                        .append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
+            }
+        }
         return result;
+    }
+
+    private static Component appendLocation(Component base, String label, AutomationTracker.LocationData location) {
+        if (location == null) return base;
+        return base.append(Component.newline())
+                .append(Component.text("  " + label + ": ", NamedTextColor.GRAY))
+                .append(Component.text(location(location), NamedTextColor.WHITE));
+    }
+
+    private static String location(AutomationTracker.LocationData location) {
+        return MessageService.coordinates(location.x(), location.y(), location.z());
     }
 }
