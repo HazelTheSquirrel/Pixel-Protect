@@ -73,7 +73,7 @@ public final class SelectorParser {
             switch (normalized) {
                 case "block" -> { target.add(ActionType.BREAK); target.add(ActionType.PLACE); }
                 case "container" -> target.add(ActionType.CONTAINER);
-                case "inventory" -> target.add(ActionType.CONTAINER);
+                case "inventory" -> target.add(ActionType.INVENTORY);
                 case "item" -> { target.add(ActionType.ITEM_DROP); target.add(ActionType.ITEM_PICKUP); target.add(ActionType.ITEM_DESPAWN); }
                 case "kill" -> target.add(ActionType.ENTITY_DEATH);
                 case "spawn" -> target.add(ActionType.ENTITY_SPAWN);
@@ -88,9 +88,6 @@ public final class SelectorParser {
                     try { target.add(ActionType.valueOf(normalized.toUpperCase(Locale.ROOT))); }
                     catch (IllegalArgumentException e) { throw new IllegalArgumentException("Unbekannte Aktion: " + value); }
                 }
-            }
-            if (value.startsWith("+")) {
-                // '+' explicitly means inclusion; the target is already include unless the token was malformed.
             }
         }
     }
