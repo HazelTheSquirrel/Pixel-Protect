@@ -87,7 +87,7 @@ public final class PixelProtectCommand {
                                 .executes(ctx -> {
                                     final int days = IntegerArgumentType.getInteger(ctx, "days");
                                     return purge(ctx.getSource().getSender(), days);
-                                }));
+                                })));
         return root;
     }
 
