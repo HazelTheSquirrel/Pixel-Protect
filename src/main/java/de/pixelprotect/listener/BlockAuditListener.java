@@ -144,7 +144,7 @@ public final class BlockAuditListener implements Listener {
     public void onEntityForm(EntityBlockFormEvent event) {
         final Block block = event.getBlock();
         audit.recordEntity(block, ActionType.FORM, event.getEntity(), BlockSnapshot.capture(block),
-                BlockSnapshot.fromState(event.getBlockState()));
+                BlockSnapshot.fromState(event.getNewState()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
