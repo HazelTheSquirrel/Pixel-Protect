@@ -3,16 +3,10 @@ package de.pixelprotect.storage;
 import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.AuditEntry;
 import de.pixelprotect.model.AuditQuery;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Types;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -26,375 +20,40 @@ import java.util.logging.Logger;
 
 public final class Database implements AutoCloseable {
     private static final int SCHEMA_VERSION = 4;
-    private final Path file;
-    private final Logger logger;
-    private final int batchSize;
-    private final long flushIntervalMillis;
+    private final Path file; private final Logger logger; private final int batchSize; private final long flushIntervalMillis;
     private final BlockingQueue<AuditEntry> queue;
-    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
-        final Thread thread = new Thread(r, "PixelProtect-Database");
-        thread.setDaemon(true);
-        return thread;
-    });
-    private Connection connection;
-    private volatile boolean running;
-
-    public Database(Path file, int queueCapacity, int batchSize, long flushIntervalMillis, Logger logger) {
-        this.file = file;
-        this.queue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
-        this.batchSize = Math.max(1, batchSize);
-        this.flushIntervalMillis = Math.max(25L, flushIntervalMillis);
-        this.logger = logger;
-    }
-
-    public void open() throws SQLException, IOException {
-        final Path parent = file.toAbsolutePath().getParent();
-        if (parent != null) Files.createDirectories(parent);
-        connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
-        try (var statement = connection.createStatement()) {
-            statement.execute("PRAGMA journal_mode=WAL");
-            statement.execute("PRAGMA synchronous=NORMAL");
-            statement.execute("PRAGMA foreign_keys=ON");
-            statement.execute("PRAGMA busy_timeout=5000");
-            migrate(statement);
-        }
-        running = true;
-        executor.scheduleAtFixedRate(this::flushQueue, flushIntervalMillis, flushIntervalMillis, TimeUnit.MILLISECONDS);
-    }
-
-    private void migrate(java.sql.Statement statement) throws SQLException {
-        statement.executeUpdate("CREATE TABLE IF NOT EXISTS pixelprotect_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-        int version = 0;
-        try (var result = statement.executeQuery("SELECT value FROM pixelprotect_meta WHERE key='schema_version'")) {
-            if (result.next()) version = Integer.parseInt(result.getString(1));
-        }
-        if (version < 1) {
-            statement.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS audit (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        time INTEGER NOT NULL,
-                        world TEXT NOT NULL,
-                        x INTEGER NOT NULL,
-                        y INTEGER NOT NULL,
-                        z INTEGER NOT NULL,
-                        actor_uuid TEXT,
-                        actor_name TEXT NOT NULL,
-                        action TEXT NOT NULL,
-                        before_data TEXT NOT NULL,
-                        after_data TEXT NOT NULL,
-                        before_inventory BLOB,
-                        after_inventory BLOB
-                    )
-                    """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_location_time ON audit(world, x, z, time DESC)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_actor_time ON audit(actor_uuid, time DESC)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_action_time ON audit(action, time DESC)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(time)");
-            version = 1;
-        }
-        if (version < 2) {
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_y_time ON audit(world, y, time DESC)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_action_time ON audit(world, action, time DESC)");
-            version = 2;
-        }
-        if (version < 3) {
-            statement.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS rollback_jobs (
-                        id TEXT PRIMARY KEY,
-                        status TEXT NOT NULL,
-                        total INTEGER NOT NULL,
-                        processed INTEGER NOT NULL DEFAULT 0,
-                        applied INTEGER NOT NULL DEFAULT 0,
-                        skipped INTEGER NOT NULL DEFAULT 0,
-                        error TEXT,
-                        created_at INTEGER NOT NULL,
-                        finished_at INTEGER
-                    )
-                    """);
-            statement.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS rollback_job_entries (
-                        job_id TEXT NOT NULL,
-                        audit_id INTEGER NOT NULL,
-                        applied INTEGER NOT NULL DEFAULT 0,
-                        PRIMARY KEY(job_id, audit_id),
-                        FOREIGN KEY(job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE,
-                        FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE
-                    )
-                    """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_job_entries_applied ON rollback_job_entries(job_id, applied)");
-            version = 3;
-        }
-        if (version < 4) {
-            statement.executeUpdate("""
-                    CREATE TABLE IF NOT EXISTS rollback_restores (
-                        id TEXT PRIMARY KEY,
-                        source_job_id TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        applied INTEGER NOT NULL DEFAULT 0,
-                        skipped INTEGER NOT NULL DEFAULT 0,
-                        error TEXT,
-                        created_at INTEGER NOT NULL,
-                        finished_at INTEGER,
-                        FOREIGN KEY(source_job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE
-                    )
-                    """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_restores_source ON rollback_restores(source_job_id, created_at DESC)");
-            version = 4;
-        }
-        if (version != SCHEMA_VERSION) throw new SQLException("Unsupported PixelProtect schema version: " + version);
-        statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED', error='Server restarted while rollback was running.', finished_at=" + System.currentTimeMillis() + " WHERE status='RUNNING'");
-        try (PreparedStatement update = connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")) {
-            update.setString(1, Integer.toString(version));
-            update.executeUpdate();
-        }
-    }
-
-    public boolean record(AuditEntry entry) {
-        if (!running || !queue.offer(entry)) {
-            if (running) logger.severe("Audit queue is full; refusing to silently drop an audit record.");
-            return false;
-        }
-        return true;
-    }
-
-    public CompletableFuture<List<AuditEntry>> query(AuditQuery query) {
-        return executeAsync(() -> { flushQueue(); return queryBlocking(query); });
-    }
-
-    public CompletableFuture<Long> count(AuditQuery query) {
-        return executeAsync(() -> { flushQueue(); return countBlocking(query); });
-    }
-
-    public CompletableFuture<List<AuditEntry>> query(UUID world, int centerX, int centerY, int centerZ,
-                                                       int radius, long since, long until, String actorName, int limit) {
-        return query(new AuditQuery(world, centerX, centerY, centerZ, radius, since, until, actorName,
-                java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), java.util.Set.of(), limit));
-    }
-
-    private List<AuditEntry> queryBlocking(AuditQuery query) throws SQLException {
-        final QuerySql built = buildQuery(query, false);
-        final String sql = built.sql() + " ORDER BY time DESC,id DESC LIMIT ?";
-        final List<Object> params = new ArrayList<>(built.params());
-        params.add(query.limit());
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            bind(statement, params);
-            try (ResultSet result = statement.executeQuery()) {
-                final List<AuditEntry> entries = new ArrayList<>();
-                while (result.next()) entries.add(read(result));
-                return entries;
-            }
-        }
-    }
-
-    private long countBlocking(AuditQuery query) throws SQLException {
-        final QuerySql built = buildQuery(query, true);
-        try (PreparedStatement statement = connection.prepareStatement(built.sql())) {
-            bind(statement, built.params());
-            try (ResultSet result = statement.executeQuery()) { return result.next() ? result.getLong(1) : 0L; }
-        }
-    }
-
-    private QuerySql buildQuery(AuditQuery query, boolean count) {
-        final int radius = query.radius();
-        final long radiusSquared = (long) radius * radius;
-        final StringBuilder sql = new StringBuilder(count ? "SELECT COUNT(*) FROM audit WHERE " : "SELECT id,time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory FROM audit WHERE ");
-        sql.append("world=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ?");
-        sql.append(" AND ((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) <= ? AND time>=? AND time<=?");
-        final List<Object> params = new ArrayList<>();
-        params.add(query.world().toString());
-        params.add(query.centerX() - radius); params.add(query.centerX() + radius);
-        params.add(query.centerY() - radius); params.add(query.centerY() + radius);
-        params.add(query.centerZ() - radius); params.add(query.centerZ() + radius);
-        params.add(query.centerX()); params.add(query.centerX()); params.add(query.centerY()); params.add(query.centerY());
-        params.add(query.centerZ()); params.add(query.centerZ()); params.add(radiusSquared);
-        params.add(query.since()); params.add(query.until());
-        if (query.actorName() != null && !query.actorName().isBlank()) { sql.append(" AND actor_name=?"); params.add(query.actorName()); }
-        appendActions(sql, params, query.includeActions(), true);
-        appendActions(sql, params, query.excludeActions(), false);
-        appendBlocks(sql, params, query.includeBlocks(), false);
-        appendBlocks(sql, params, query.excludeBlocks(), true);
-        return new QuerySql(sql.toString(), params);
-    }
-
-    private static void appendActions(StringBuilder sql, List<Object> params, java.util.Set<ActionType> actions, boolean include) {
-        if (actions.isEmpty()) return;
-        sql.append(include ? " AND action IN (" : " AND action NOT IN (");
-        sql.append("?,".repeat(actions.size()));
-        sql.setLength(sql.length() - 1);
-        sql.append(')');
-        actions.forEach(action -> params.add(action.name()));
-    }
-
-    private static void appendBlocks(StringBuilder sql, List<Object> params, java.util.Set<String> blocks, boolean exclude) {
-        for (String block : blocks) {
-            sql.append(exclude ? " AND before_data NOT LIKE ? AND after_data NOT LIKE ?" : " AND (before_data LIKE ? OR after_data LIKE ?)");
-            params.add(block + "%"); params.add(block + "%");
-        }
-    }
-
-    private static void bind(PreparedStatement statement, List<Object> params) throws SQLException {
-        for (int i = 0; i < params.size(); i++) setParameter(statement, i + 1, params.get(i));
-    }
-
-    private static void setParameter(PreparedStatement statement, int index, Object value) throws SQLException {
-        if (value instanceof Integer integer) statement.setInt(index, integer);
-        else if (value instanceof Long number) statement.setLong(index, number);
-        else statement.setString(index, value.toString());
-    }
-
-    public CompletableFuture<Integer> purgeBefore(long cutoff) {
-        return executeAsync(() -> {
-            flushQueue();
-            try (PreparedStatement statement = connection.prepareStatement("DELETE FROM audit WHERE time < ?")) {
-                statement.setLong(1, cutoff); return statement.executeUpdate();
-            }
-        });
-    }
-
-    public CompletableFuture<Long> count() {
-        return executeAsync(() -> {
-            flushQueue();
-            try (var statement = connection.createStatement(); var result = statement.executeQuery("SELECT COUNT(*) FROM audit")) {
-                return result.next() ? result.getLong(1) : 0L;
-            }
-        });
-    }
-
-    public CompletableFuture<Void> createRollbackJob(UUID id, List<AuditEntry> entries) {
-        final List<AuditEntry> snapshot = List.copyOf(entries);
-        return executeAsync(() -> {
-            flushQueue();
-            connection.setAutoCommit(false);
-            try (PreparedStatement job = connection.prepareStatement("INSERT INTO rollback_jobs(id,status,total,created_at) VALUES(?,?,?,?)");
-                 PreparedStatement entry = connection.prepareStatement("INSERT INTO rollback_job_entries(job_id,audit_id) VALUES(?,?)")) {
-                job.setString(1, id.toString()); job.setString(2, "RUNNING"); job.setInt(3, snapshot.size()); job.setLong(4, System.currentTimeMillis()); job.executeUpdate();
-                for (AuditEntry audit : snapshot) { entry.setString(1, id.toString()); entry.setLong(2, audit.id()); entry.addBatch(); }
-                entry.executeBatch();
-                connection.commit();
-            } catch (SQLException exception) { connection.rollback(); throw exception; }
-            finally { connection.setAutoCommit(true); }
-            return null;
-        });
-    }
-
-    public CompletableFuture<Void> updateRollbackJob(UUID id, String status, int processed, int applied, int skipped, String error) {
-        return executeAsync(() -> {
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_jobs SET status=?,processed=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")) {
-                statement.setString(1, status); statement.setInt(2, processed); statement.setInt(3, applied); statement.setInt(4, skipped);
-                if (error == null) statement.setNull(5, Types.VARCHAR); else statement.setString(5, error);
-                if ("RUNNING".equals(status)) statement.setNull(6, Types.BIGINT); else statement.setLong(6, System.currentTimeMillis());
-                statement.setString(7, id.toString()); statement.executeUpdate();
-            }
-            return null;
-        });
-    }
-
-    public CompletableFuture<Void> markRollbackApplied(UUID id, List<Long> auditIds) {
-        final List<Long> ids = List.copyOf(auditIds);
-        return executeAsync(() -> {
-            if (ids.isEmpty()) return null;
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_job_entries SET applied=1 WHERE job_id=? AND audit_id=?")) {
-                for (long auditId : ids) { statement.setString(1, id.toString()); statement.setLong(2, auditId); statement.addBatch(); }
-                statement.executeBatch();
-            }
-            return null;
-        });
-    }
-
-    public CompletableFuture<RollbackJobRecord> rollbackJob(UUID id) {
-        return executeAsync(() -> {
-            try (PreparedStatement statement = connection.prepareStatement("SELECT id,status,total,processed,applied,skipped,error,created_at,finished_at FROM rollback_jobs WHERE id=?")) {
-                statement.setString(1, id.toString());
-                try (ResultSet result = statement.executeQuery()) {
-                    if (!result.next()) return null;
-                    return new RollbackJobRecord(UUID.fromString(result.getString("id")), result.getString("status"), result.getInt("total"), result.getInt("processed"), result.getInt("applied"), result.getInt("skipped"), result.getString("error"), result.getLong("created_at"), result.getLong("finished_at"));
-                }
-            }
-        });
-    }
-
-    public CompletableFuture<List<AuditEntry>> appliedRollbackEntries(UUID id) {
-        return executeAsync(() -> {
-            flushQueue();
-            final List<AuditEntry> entries = new ArrayList<>();
-            try (PreparedStatement statement = connection.prepareStatement("SELECT a.id,a.time,a.world,a.x,a.y,a.z,a.actor_uuid,a.actor_name,a.action,a.before_data,a.after_data,a.before_inventory,a.after_inventory FROM rollback_job_entries j JOIN audit a ON a.id=j.audit_id WHERE j.job_id=? AND j.applied=1 ORDER BY a.id ASC")) {
-                statement.setString(1, id.toString());
-                try (ResultSet result = statement.executeQuery()) { while (result.next()) entries.add(read(result)); }
-            }
-            return entries;
-        });
-    }
-
-    public CompletableFuture<UUID> createRestore(UUID sourceJob) {
-        final UUID restoreId = UUID.randomUUID();
-        return executeAsync(() -> {
-            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO rollback_restores(id,source_job_id,status,created_at) VALUES(?,?,?,?)")) {
-                statement.setString(1, restoreId.toString()); statement.setString(2, sourceJob.toString()); statement.setString(3, "RUNNING"); statement.setLong(4, System.currentTimeMillis()); statement.executeUpdate();
-            }
-            return restoreId;
-        });
-    }
-
-    public CompletableFuture<Void> updateRestore(UUID restoreId, String status, int applied, int skipped, String error) {
-        return executeAsync(() -> {
-            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_restores SET status=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")) {
-                statement.setString(1, status); statement.setInt(2, applied); statement.setInt(3, skipped);
-                if (error == null) statement.setNull(4, Types.VARCHAR); else statement.setString(4, error);
-                statement.setLong(5, System.currentTimeMillis()); statement.setString(6, restoreId.toString()); statement.executeUpdate();
-            }
-            return null;
-        });
-    }
-
-    private <T> CompletableFuture<T> executeAsync(SqlSupplier<T> supplier) {
-        final CompletableFuture<T> future = new CompletableFuture<>();
-        executor.execute(() -> { try { future.complete(supplier.get()); } catch (Throwable throwable) { future.completeExceptionally(throwable); } });
-        return future;
-    }
-
-    private AuditEntry read(ResultSet result) throws SQLException {
-        final String actorUuid = result.getString("actor_uuid");
-        return new AuditEntry(result.getLong("id"), result.getLong("time"), UUID.fromString(result.getString("world")), result.getInt("x"), result.getInt("y"), result.getInt("z"), actorUuid == null ? null : UUID.fromString(actorUuid), result.getString("actor_name"), ActionType.valueOf(result.getString("action")), result.getString("before_data"), result.getString("after_data"), result.getBytes("before_inventory"), result.getBytes("after_inventory"));
-    }
-
-    private void flushQueue() {
-        if (queue.isEmpty() || connection == null) return;
-        final List<AuditEntry> batch = new ArrayList<>(batchSize);
-        queue.drainTo(batch, batchSize);
-        try { insertBatch(batch); }
-        catch (SQLException exception) {
-            logger.severe("Failed to persist audit batch: " + exception.getMessage());
-            for (AuditEntry entry : batch) if (!queue.offer(entry)) logger.severe("Audit queue overflow while retrying a failed database batch.");
-        }
-    }
-
-    private void insertBatch(List<AuditEntry> entries) throws SQLException {
-        if (entries.isEmpty()) return;
-        connection.setAutoCommit(false);
-        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO audit(time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")) {
-            for (AuditEntry entry : entries) {
-                int i = 1;
-                statement.setLong(i++, entry.time()); statement.setString(i++, entry.world().toString()); statement.setInt(i++, entry.x()); statement.setInt(i++, entry.y()); statement.setInt(i++, entry.z());
-                if (entry.actor() == null) statement.setNull(i++, Types.VARCHAR); else statement.setString(i++, entry.actor().toString());
-                statement.setString(i++, entry.actorName()); statement.setString(i++, entry.action().name()); statement.setString(i++, entry.beforeData()); statement.setString(i++, entry.afterData());
-                statement.setBytes(i++, entry.beforeInventory()); statement.setBytes(i, entry.afterInventory()); statement.addBatch();
-            }
-            statement.executeBatch(); connection.commit();
-        } catch (SQLException exception) { connection.rollback(); throw exception; }
-        finally { connection.setAutoCommit(true); }
-    }
-
-    @Override public void close() {
-        running = false;
-        if (!executor.isShutdown()) executor.execute(this::flushQueue);
-        executor.shutdown();
-        try { executor.awaitTermination(10, TimeUnit.SECONDS); }
-        catch (InterruptedException exception) { Thread.currentThread().interrupt(); executor.shutdownNow(); }
-        try { if (connection != null && !connection.isClosed()) connection.close(); }
-        catch (SQLException exception) { logger.warning("Failed to close SQLite connection: " + exception.getMessage()); }
-    }
-
-    public record RollbackJobRecord(UUID id, String status, int total, int processed, int applied, int skipped, String error, long createdAt, long finishedAt) {}
-    private record QuerySql(String sql, List<Object> params) {}
-    @FunctionalInterface private interface SqlSupplier<T> { T get() throws Exception; }
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> { Thread t=new Thread(r,"PixelProtect-Database"); t.setDaemon(true); return t; });
+    private Connection connection; private volatile boolean running;
+    public Database(Path file,int queueCapacity,int batchSize,long flushIntervalMillis,Logger logger){this.file=file;queue=new ArrayBlockingQueue<>(Math.max(1,queueCapacity));this.batchSize=Math.max(1,batchSize);this.flushIntervalMillis=Math.max(25L,flushIntervalMillis);this.logger=logger;}
+    public void open() throws SQLException,IOException { Path parent=file.toAbsolutePath().getParent(); if(parent!=null)Files.createDirectories(parent); connection=DriverManager.getConnection("jdbc:sqlite:"+file.toAbsolutePath()); try(var s=connection.createStatement()){s.execute("PRAGMA journal_mode=WAL");s.execute("PRAGMA synchronous=NORMAL");s.execute("PRAGMA foreign_keys=ON");s.execute("PRAGMA busy_timeout=5000");migrate(s);} running=true;executor.scheduleAtFixedRate(this::flushQueue,flushIntervalMillis,flushIntervalMillis,TimeUnit.MILLISECONDS); }
+    private void migrate(Statement statement)throws SQLException{statement.executeUpdate("CREATE TABLE IF NOT EXISTS pixelprotect_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)");int version=0;try(var r=statement.executeQuery("SELECT value FROM pixelprotect_meta WHERE key='schema_version'")){if(r.next())version=Integer.parseInt(r.getString(1));}if(version<1){statement.executeUpdate("CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,world TEXT NOT NULL,x INTEGER NOT NULL,y INTEGER NOT NULL,z INTEGER NOT NULL,actor_uuid TEXT,actor_name TEXT NOT NULL,action TEXT NOT NULL,before_data TEXT NOT NULL,after_data TEXT NOT NULL,before_inventory BLOB,after_inventory BLOB)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_location_time ON audit(world,x,z,time DESC)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_actor_time ON audit(actor_uuid,time DESC)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_action_time ON audit(action,time DESC)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_time ON audit(time)");version=1;}if(version<2){statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_y_time ON audit(world,y,time DESC)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_action_time ON audit(world,action,time DESC)");version=2;}if(version<3){statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_jobs (id TEXT PRIMARY KEY,status TEXT NOT NULL,total INTEGER NOT NULL,processed INTEGER NOT NULL DEFAULT 0,applied INTEGER NOT NULL DEFAULT 0,skipped INTEGER NOT NULL DEFAULT 0,error TEXT,created_at INTEGER NOT NULL,finished_at INTEGER)");statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_job_entries (job_id TEXT NOT NULL,audit_id INTEGER NOT NULL,applied INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job_id,audit_id),FOREIGN KEY(job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE,FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_job_entries_applied ON rollback_job_entries(job_id,applied)");version=3;}if(version<4){statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_restores (id TEXT PRIMARY KEY,source_job_id TEXT NOT NULL,status TEXT NOT NULL,applied INTEGER NOT NULL DEFAULT 0,skipped INTEGER NOT NULL DEFAULT 0,error TEXT,created_at INTEGER NOT NULL,finished_at INTEGER,FOREIGN KEY(source_job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE)");statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_restores_source ON rollback_restores(source_job_id,created_at DESC)");version=4;}if(version!=SCHEMA_VERSION)throw new SQLException("Unsupported PixelProtect schema version: "+version);statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED',error='Server restarted while rollback was running.',finished_at="+System.currentTimeMillis()+" WHERE status='RUNNING'");try(PreparedStatement u=connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")){u.setString(1,Integer.toString(version));u.executeUpdate();}}
+    public boolean record(AuditEntry entry){if(!running||!queue.offer(entry)){if(running)logger.severe("Audit queue is full; refusing to silently drop an audit record.");return false;}return true;}
+    public CompletableFuture<List<AuditEntry>> query(AuditQuery q){return executeAsync(()->{flushQueue();return queryBlocking(q);});}
+    public CompletableFuture<Long> count(AuditQuery q){return executeAsync(()->{flushQueue();return countBlocking(q);});}
+    public CompletableFuture<List<AuditEntry>> query(UUID world,int x,int y,int z,int radius,long since,long until,String actor,int limit){return query(new AuditQuery(world,x,y,z,radius,since,until,actor,java.util.Set.of(),java.util.Set.of(),java.util.Set.of(),java.util.Set.of(),limit));}
+    private List<AuditEntry> queryBlocking(AuditQuery q)throws SQLException{QuerySql b=buildQuery(q,false);String sql=b.sql()+" ORDER BY time DESC,id DESC LIMIT ? OFFSET ?";List<Object> p=new ArrayList<>(b.params());p.add(q.limit());p.add(q.offset());try(PreparedStatement s=connection.prepareStatement(sql)){bind(s,p);try(ResultSet r=s.executeQuery()){List<AuditEntry> out=new ArrayList<>();while(r.next())out.add(read(r));return out;}}}
+    private long countBlocking(AuditQuery q)throws SQLException{QuerySql b=buildQuery(q,true);try(PreparedStatement s=connection.prepareStatement(b.sql())){bind(s,b.params());try(ResultSet r=s.executeQuery()){return r.next()?r.getLong(1):0L;}}}
+    private QuerySql buildQuery(AuditQuery q,boolean count){int radius=q.radius();long rs=(long)radius*radius;StringBuilder sql=new StringBuilder(count?"SELECT COUNT(*) FROM audit WHERE ":"SELECT id,time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory FROM audit WHERE ");sql.append("world=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ?");sql.append(" AND ((x-?)*(x-?)+(y-?)*(y-?)+(z-?)*(z-?)) <= ? AND time>=? AND time<=?");List<Object> p=new ArrayList<>();p.add(q.world().toString());p.add(q.centerX()-radius);p.add(q.centerX()+radius);p.add(q.centerY()-radius);p.add(q.centerY()+radius);p.add(q.centerZ()-radius);p.add(q.centerZ()+radius);p.add(q.centerX());p.add(q.centerX());p.add(q.centerY());p.add(q.centerY());p.add(q.centerZ());p.add(q.centerZ());p.add(rs);p.add(q.since());p.add(q.until());if(q.actorName()!=null&&!q.actorName().isBlank()){sql.append(" AND actor_name=?");p.add(q.actorName());}appendActions(sql,p,q.includeActions(),true);appendActions(sql,p,q.excludeActions(),false);appendBlocks(sql,p,q.includeBlocks(),false);appendBlocks(sql,p,q.excludeBlocks(),true);return new QuerySql(sql.toString(),p);}
+    private static void appendActions(StringBuilder s,List<Object> p,java.util.Set<ActionType>a,boolean include){if(a.isEmpty())return;s.append(include?" AND action IN (":" AND action NOT IN (");s.append("?,".repeat(a.size()));s.setLength(s.length()-1);s.append(')');a.forEach(x->p.add(x.name()));}
+    private static void appendBlocks(StringBuilder s,List<Object> p,java.util.Set<String>b,boolean exclude){for(String x:b){s.append(exclude?" AND before_data NOT LIKE ? AND after_data NOT LIKE ?":" AND (before_data LIKE ? OR after_data LIKE ?)");p.add(x+"%");p.add(x+"%");}}
+    private static void bind(PreparedStatement s,List<Object>p)throws SQLException{for(int i=0;i<p.size();i++){Object v=p.get(i);if(v instanceof Integer n)s.setInt(i+1,n);else if(v instanceof Long n)s.setLong(i+1,n);else s.setString(i+1,v.toString());}}
+    public CompletableFuture<Integer> purgeBefore(long cutoff){return executeAsync(()->{flushQueue();try(PreparedStatement s=connection.prepareStatement("DELETE FROM audit WHERE time < ?")){s.setLong(1,cutoff);return s.executeUpdate();}});}
+    public CompletableFuture<Long> count(){return executeAsync(()->{flushQueue();try(var s=connection.createStatement();var r=s.executeQuery("SELECT COUNT(*) FROM audit")){return r.next()?r.getLong(1):0L;}});}
+    public CompletableFuture<Void> createRollbackJob(UUID id,List<AuditEntry> entries){List<AuditEntry> snapshot=List.copyOf(entries);return executeAsync(()->{flushQueue();connection.setAutoCommit(false);try(PreparedStatement j=connection.prepareStatement("INSERT INTO rollback_jobs(id,status,total,created_at) VALUES(?,?,?,?)");PreparedStatement e=connection.prepareStatement("INSERT INTO rollback_job_entries(job_id,audit_id) VALUES(?,?)")){j.setString(1,id.toString());j.setString(2,"RUNNING");j.setInt(3,snapshot.size());j.setLong(4,System.currentTimeMillis());j.executeUpdate();for(AuditEntry a:snapshot){e.setString(1,id.toString());e.setLong(2,a.id());e.addBatch();}e.executeBatch();connection.commit();}catch(SQLException ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}return null;});}
+    public CompletableFuture<Void> updateRollbackJob(UUID id,String status,int processed,int applied,int skipped,String error){return executeAsync(()->{try(PreparedStatement s=connection.prepareStatement("UPDATE rollback_jobs SET status=?,processed=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")){s.setString(1,status);s.setInt(2,processed);s.setInt(3,applied);s.setInt(4,skipped);if(error==null)s.setNull(5,Types.VARCHAR);else s.setString(5,error);if("RUNNING".equals(status))s.setNull(6,Types.BIGINT);else s.setLong(6,System.currentTimeMillis());s.setString(7,id.toString());s.executeUpdate();}return null;});}
+    public CompletableFuture<Void> markRollbackApplied(UUID id,List<Long> ids){List<Long>x=List.copyOf(ids);return executeAsync(()->{if(x.isEmpty())return null;try(PreparedStatement s=connection.prepareStatement("UPDATE rollback_job_entries SET applied=1 WHERE job_id=? AND audit_id=?")){for(long n:x){s.setString(1,id.toString());s.setLong(2,n);s.addBatch();}s.executeBatch();}return null;});}
+    public CompletableFuture<RollbackJobRecord> rollbackJob(UUID id){return executeAsync(()->{try(PreparedStatement s=connection.prepareStatement("SELECT id,status,total,processed,applied,skipped,error,created_at,finished_at FROM rollback_jobs WHERE id=?")){s.setString(1,id.toString());try(ResultSet r=s.executeQuery()){if(!r.next())return null;return new RollbackJobRecord(UUID.fromString(r.getString("id")),r.getString("status"),r.getInt("total"),r.getInt("processed"),r.getInt("applied"),r.getInt("skipped"),r.getString("error"),r.getLong("created_at"),r.getLong("finished_at"));}}});}
+    public CompletableFuture<List<AuditEntry>> appliedRollbackEntries(UUID id){return executeAsync(()->{flushQueue();List<AuditEntry>e=new ArrayList<>();try(PreparedStatement s=connection.prepareStatement("SELECT a.id,a.time,a.world,a.x,a.y,a.z,a.actor_uuid,a.actor_name,a.action,a.before_data,a.after_data,a.before_inventory,a.after_inventory FROM rollback_job_entries j JOIN audit a ON a.id=j.audit_id WHERE j.job_id=? AND j.applied=1 ORDER BY a.id ASC")){s.setString(1,id.toString());try(ResultSet r=s.executeQuery()){while(r.next())e.add(read(r));}}return e;});}
+    public CompletableFuture<UUID> createRestore(UUID sourceJob){UUID id=UUID.randomUUID();return executeAsync(()->{try(PreparedStatement s=connection.prepareStatement("INSERT INTO rollback_restores(id,source_job_id,status,created_at) VALUES(?,?,?,?)")){s.setString(1,id.toString());s.setString(2,sourceJob.toString());s.setString(3,"RUNNING");s.setLong(4,System.currentTimeMillis());s.executeUpdate();}return id;});}
+    public CompletableFuture<Void> updateRestore(UUID id,String status,int applied,int skipped,String error){return executeAsync(()->{try(PreparedStatement s=connection.prepareStatement("UPDATE rollback_restores SET status=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")){s.setString(1,status);s.setInt(2,applied);s.setInt(3,skipped);if(error==null)s.setNull(4,Types.VARCHAR);else s.setString(4,error);s.setLong(5,System.currentTimeMillis());s.setString(6,id.toString());s.executeUpdate();}return null;});}
+    private <T> CompletableFuture<T> executeAsync(SqlSupplier<T> supplier){CompletableFuture<T>f=new CompletableFuture<>();executor.execute(()->{try{f.complete(supplier.get());}catch(Throwable t){f.completeExceptionally(t);}});return f;}
+    private AuditEntry read(ResultSet r)throws SQLException{String au=r.getString("actor_uuid");return new AuditEntry(r.getLong("id"),r.getLong("time"),UUID.fromString(r.getString("world")),r.getInt("x"),r.getInt("y"),r.getInt("z"),au==null?null:UUID.fromString(au),r.getString("actor_name"),ActionType.valueOf(r.getString("action")),r.getString("before_data"),r.getString("after_data"),r.getBytes("before_inventory"),r.getBytes("after_inventory"));}
+    private void flushQueue(){if(queue.isEmpty()||connection==null)return;List<AuditEntry>b=new ArrayList<>(batchSize);queue.drainTo(b,batchSize);try{insertBatch(b);}catch(SQLException ex){logger.severe("Failed to persist audit batch: "+ex.getMessage());for(AuditEntry e:b)if(!queue.offer(e))logger.severe("Audit queue overflow while retrying a failed database batch.");}}
+    private void insertBatch(List<AuditEntry>entries)throws SQLException{if(entries.isEmpty())return;connection.setAutoCommit(false);try(PreparedStatement s=connection.prepareStatement("INSERT INTO audit(time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")){for(AuditEntry e:entries){int i=1;s.setLong(i++,e.time());s.setString(i++,e.world().toString());s.setInt(i++,e.x());s.setInt(i++,e.y());s.setInt(i++,e.z());if(e.actor()==null)s.setNull(i++,Types.VARCHAR);else s.setString(i++,e.actor().toString());s.setString(i++,e.actorName());s.setString(i++,e.action().name());s.setString(i++,e.beforeData());s.setString(i++,e.afterData());s.setBytes(i++,e.beforeInventory());s.setBytes(i,e.afterInventory());s.addBatch();}s.executeBatch();connection.commit();}catch(SQLException ex){connection.rollback();throw ex;}finally{connection.setAutoCommit(true);}}
+    public int queueSize(){return queue.size();}
+    public int schemaVersion(){return SCHEMA_VERSION;}
+    @Override public void close(){running=false;executor.shutdown();try{executor.awaitTermination(10,TimeUnit.SECONDS);}catch(InterruptedException e){Thread.currentThread().interrupt();}if(connection!=null)try{flushQueue();connection.close();}catch(SQLException e){logger.severe("Failed to close database: "+e.getMessage());}}
+    private record QuerySql(String sql,List<Object>params){}
+    @FunctionalInterface private interface SqlSupplier<T>{T get()throws Exception;}
+    public record RollbackJobRecord(UUID id,String status,int total,int processed,int applied,int skipped,String error,long createdAt,long finishedAt){}
 }
