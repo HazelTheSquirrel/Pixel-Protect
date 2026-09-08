@@ -6,13 +6,12 @@ import de.pixelprotect.service.AuditService;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.CreatureSpawnEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityDropItemEvent;
 import org.bukkit.event.entity.EntityPickupItemEvent;
-import org.bukkit.event.entity.ItemDespawnEvent;
-import org.bukkit.event.entity.ItemSpawnEvent;
-import org.bukkit.event.entity.EntityDamageEvent;
-import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.EntityRemoveEvent;
+import org.bukkit.event.entity.ItemDespawnEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
@@ -27,21 +26,21 @@ public final class PlayerAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBucketEmpty(PlayerBucketEmptyEvent event) {
         final var block = event.getBlock();
-        final var before = BlockSnapshot.capture(block);
-        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), before, BlockSnapshot.capture(block));
+        final var snapshot = BlockSnapshot.capture(block);
+        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), snapshot, snapshot);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBucketFill(PlayerBucketFillEvent event) {
         final var block = event.getBlock();
-        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), BlockSnapshot.capture(block),
-                BlockSnapshot.capture(block));
+        final var snapshot = BlockSnapshot.capture(block);
+        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), snapshot, snapshot);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onItemSpawn(ItemSpawnEvent event) {
+    public void onCreatureSpawn(CreatureSpawnEvent event) {
         final var entity = event.getEntity();
-        audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ITEM_DROP,
+        audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_SPAWN,
                 new BlockSnapshot("minecraft:air", null), entitySnapshot(entity));
     }
 
@@ -78,13 +77,6 @@ public final class PlayerAuditListener implements Listener {
         final var entity = event.getEntity();
         audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_REMOVE,
                 entitySnapshot(entity), new BlockSnapshot("minecraft:air", null));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onEntityDamage(EntityDamageEvent event) {
-        final var entity = event.getEntity();
-        audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_DAMAGE,
-                entitySnapshot(entity), new BlockSnapshot(entitySnapshot(entity).blockData() + ";damage=" + event.getDamage(), null));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
