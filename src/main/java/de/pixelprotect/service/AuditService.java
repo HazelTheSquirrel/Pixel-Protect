@@ -16,7 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Transaction-aware audit facade with configurable world boundaries. */
+/** Transaction-aware audit facade with configurable world boundaries and explicit entity attribution. */
 public final class AuditService {
     private final Database database;
     private final Clock clock;
@@ -82,13 +82,18 @@ public final class AuditService {
 
     public boolean recordEntity(Block block, ActionType action, Entity entity, BlockSnapshot before, BlockSnapshot after,
                                 UUID transactionId, long sequence) {
-        return record(block, action, Actor.environment(), before, after, transactionId, sequence);
+        Actor actor = entity == null ? Actor.environment() : new Actor(entity.getUniqueId(), entity.getType().getKey().toString());
+        return record(block, action, actor, before, after, transactionId, sequence);
     }
 
     public boolean recordEnvironment(Block block, ActionType action, BlockSnapshot before, BlockSnapshot after) {
         return record(block, action, Actor.environment(), before, after, newTransaction(), 0L);
     }
 
+    /**
+     * Rollback suppression is deliberately short-lived and location-scoped. It exists
+     * only to prevent the plugin's own mutations from recursively entering the audit.
+     */
     public void suppress(Block block) {
         if (block != null) suppressed.put(new BlockKey(block), clock.millis() + 2_000L);
     }
