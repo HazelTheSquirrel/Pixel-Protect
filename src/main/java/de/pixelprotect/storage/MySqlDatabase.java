@@ -58,6 +58,7 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
         running = true;
         replayOverflow();
         executor.scheduleAtFixedRate(this::flushQueue, flushIntervalMillis, flushIntervalMillis, TimeUnit.MILLISECONDS);
+        super.openOverflowWriter();
     }
 
     private static void migrateMySql(Connection connection) throws SQLException {
@@ -99,12 +100,7 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
 
     @Override
     public void close() {
-        running = false;
-        executor.shutdown();
-        try { executor.awaitTermination(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        try { flushQueue(); } catch (RuntimeException ignored) { }
-        if (connection != null) try { connection.close(); } catch (SQLException ignored) { }
-        if (dataSource != null) dataSource.close();
         super.close();
+        if (dataSource != null) dataSource.close();
     }
 }
