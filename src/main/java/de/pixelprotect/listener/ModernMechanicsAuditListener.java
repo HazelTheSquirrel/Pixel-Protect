@@ -107,7 +107,7 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block block = event.getBlock();
         BlockSnapshot snapshot = BlockSnapshot.capture(block);
         audit.recordEnvironment(block, ActionType.DISPENSE, snapshot, snapshot,
-                "ITEM:" + event.getItem().getType().getKey() + ":" + event.getItem().getAmount(), audit.newTransaction(), 0L);
+                "DISPENSE_PREPARE", audit.newTransaction(), 0L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
