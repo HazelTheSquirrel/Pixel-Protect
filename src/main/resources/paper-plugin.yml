@@ -3,4 +3,4 @@ version: '1.0.0'
 main: de.pixelprotect.PixelProtect
 api-version: '26.2'
 author: HazelTheSquirrel
-description: Standalone CoreProtect-style audit and rollback system for Paper 26.2+
+description: High-performance forensic logging, inspection and rollback for Paper 26.2+

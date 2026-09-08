@@ -34,6 +34,14 @@ logging:
   entities: true
   inventories: true
   block-entities: true
+  player-activity: true
+  chat: true
+  commands: true
+  sessions: true
+  interactions: true
+  signs: true
+  entity-interactions: true
+  entity-damage: true
 
 rollback:
   max-hours: 168

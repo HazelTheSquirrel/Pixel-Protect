@@ -3,6 +3,7 @@ package de.pixelprotect;
 import de.pixelprotect.api.PixelProtectApi;
 import de.pixelprotect.api.PixelProtectApiImpl;
 import de.pixelprotect.command.PixelProtectCommand;
+import de.pixelprotect.listener.ActivityAuditListener;
 import de.pixelprotect.listener.AutomationAuditListener;
 import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.ContainerProcessingAuditListener;
@@ -84,6 +85,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.growth", true),
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
+        getServer().getPluginManager().registerEvents(new ActivityAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new InventoryAuditListener(audit, automation), this);
         getServer().getPluginManager().registerEvents(new ContainerProcessingAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
@@ -95,7 +97,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getInt("rollback.max-records", 100_000));
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
                 commands -> commands.registrar().register(command.create().build(),
-                        "Protokolliert und setzt Weltänderungen zurück", List.of("pp")));
+                        "Protokolliert, untersucht und setzt Weltänderungen zurück", List.of("pp", "co")));
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));

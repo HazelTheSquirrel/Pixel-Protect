@@ -10,14 +10,11 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.FormatStyle;
 import java.util.Locale;
 
-/** Zentrale, einheitliche deutsche Darstellung für alle Spieler- und Adminmeldungen. */
+/** Zentrale, einheitliche Darstellung für Audit- und Adminmeldungen. */
 public final class MessageService {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
-            .withLocale(Locale.GERMANY)
-            .withZone(ZoneId.systemDefault());
-
-    private MessageService() {
-    }
+            .withLocale(Locale.GERMANY).withZone(ZoneId.systemDefault());
+    private MessageService() {}
 
     public static String action(ActionType action) {
         return switch (action) {
@@ -41,6 +38,12 @@ public final class MessageService {
             case ENTITY_REMOVE -> "Entität entfernt";
             case ENTITY_DAMAGE -> "Entität beschädigt";
             case PROJECTILE -> "Projektil";
+            case INTERACT -> "Interaktion";
+            case ENTITY_INTERACT -> "Entitätsinteraktion";
+            case SIGN -> "Schild geändert";
+            case CHAT -> "Chat";
+            case COMMAND -> "Befehl";
+            case SESSION -> "Sitzung";
         };
     }
 
@@ -66,15 +69,7 @@ public final class MessageService {
         };
     }
 
-    public static String time(long epochMillis) {
-        return TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis));
-    }
-
-    public static String coordinates(AuditEntry entry) {
-        return coordinates(entry.x(), entry.y(), entry.z());
-    }
-
-    public static String coordinates(int x, int y, int z) {
-        return "X: " + x + "  Y: " + y + "  Z: " + z;
-    }
+    public static String time(long epochMillis) { return TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis)); }
+    public static String coordinates(AuditEntry entry) { return coordinates(entry.x(), entry.y(), entry.z()); }
+    public static String coordinates(int x, int y, int z) { return "X: " + x + "  Y: " + y + "  Z: " + z; }
 }
