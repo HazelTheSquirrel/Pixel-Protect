@@ -1,6 +1,7 @@
 package de.pixelprotect.service;
 
 import org.junit.jupiter.api.Test;
+import org.bukkit.inventory.ItemStack;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,9 +41,8 @@ final class InventoryDiffServiceTest {
     }
 
     @Test
-    void emptyAndMalformedItemStacksNeverEscapeDiffCalculation() {
-        assertTrue(InventoryDiffService.itemChanges(null, null).isEmpty());
-        assertTrue(InventoryDiffService.itemChanges(new org.bukkit.inventory.ItemStack[0],
-                new org.bukkit.inventory.ItemStack[0]).isEmpty());
+    void emptyItemStackArraysNeverEscapeDiffCalculation() {
+        assertTrue(InventoryDiffService.itemChanges((ItemStack[]) null, (ItemStack[]) null).isEmpty());
+        assertTrue(InventoryDiffService.itemChanges(new ItemStack[0], new ItemStack[0]).isEmpty());
     }
 }
