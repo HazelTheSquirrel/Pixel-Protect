@@ -10,226 +10,41 @@ import org.bukkit.block.BlockFace;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.block.BlockBreakEvent;
-import org.bukkit.event.block.BlockBurnEvent;
-import org.bukkit.event.block.BlockExplodeEvent;
-import org.bukkit.event.block.BlockFadeEvent;
-import org.bukkit.event.block.BlockFormEvent;
-import org.bukkit.event.block.BlockFromToEvent;
-import org.bukkit.event.block.BlockGrowEvent;
-import org.bukkit.event.block.BlockMultiPlaceEvent;
-import org.bukkit.event.block.BlockPistonExtendEvent;
-import org.bukkit.event.block.BlockPistonRetractEvent;
-import org.bukkit.event.block.BlockPlaceEvent;
-import org.bukkit.event.block.BlockSpreadEvent;
-import org.bukkit.event.block.BlockFertilizeEvent;
-import org.bukkit.event.block.EntityBlockFormEvent;
+import org.bukkit.event.block.*;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.world.StructureGrowEvent;
 import org.bukkit.plugin.Plugin;
-
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class BlockAuditListener implements Listener {
-    private final Plugin plugin;
-    private final AuditService audit;
-    private final boolean placeBreak;
-    private final boolean explosions;
-    private final boolean fire;
-    private final boolean piston;
-    private final boolean fluids;
-    private final boolean growth;
-    private final boolean entityChanges;
+    private final Plugin plugin; private final AuditService audit; private final boolean placeBreak,explosions,fire,piston,fluids,growth,entityChanges;
+    public BlockAuditListener(Plugin plugin,AuditService audit,boolean placeBreak,boolean explosions,boolean fire,boolean piston,boolean fluids,boolean growth,boolean entityChanges){this.plugin=plugin;this.audit=audit;this.placeBreak=placeBreak;this.explosions=explosions;this.fire=fire;this.piston=piston;this.fluids=fluids;this.growth=growth;this.entityChanges=entityChanges;}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onBreak(BlockBreakEvent e){if(!placeBreak)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordPlayer(b,ActionType.BREAK,e.getPlayer(),before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onPlace(BlockPlaceEvent e){if(!placeBreak||e instanceof BlockMultiPlaceEvent)return;Block b=e.getBlockPlaced();BlockSnapshot before=BlockSnapshot.fromState(e.getBlockReplacedState());later(b,()->audit.recordPlayer(b,ActionType.PLACE,e.getPlayer(),before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onMultiPlace(BlockMultiPlaceEvent e){if(!placeBreak)return;List<Block>blocks=new ArrayList<>();List<BlockSnapshot>before=new ArrayList<>();for(var s:e.getReplacedBlockStates()){blocks.add(s.getBlock());before.add(BlockSnapshot.fromState(s));}if(blocks.isEmpty())return;later(blocks.getFirst(),()->{for(int i=0;i<blocks.size();i++)audit.recordPlayer(blocks.get(i),ActionType.PLACE,e.getPlayer(),before.get(i),BlockSnapshot.capture(blocks.get(i)));});}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onBurn(BlockBurnEvent e){if(!fire)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEnvironment(b,ActionType.BURN,before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onBlockExplosion(BlockExplodeEvent e){if(explosions)recordMany(e.blockList(),ActionType.EXPLOSION,null);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onEntityExplosion(EntityExplodeEvent e){if(explosions)recordMany(e.blockList(),ActionType.EXPLOSION,e.getEntity());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFade(BlockFadeEvent e){if(growth)recordAfter(e.getBlock(),ActionType.FORM,Actor.environment());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onForm(BlockFormEvent e){if(growth)recordAfter(e.getBlock(),ActionType.FORM,Actor.environment());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onGrow(BlockGrowEvent e){if(growth)recordAfter(e.getBlock(),ActionType.GROW,Actor.environment());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onSpread(BlockSpreadEvent e){if(growth)recordAfter(e.getBlock(),ActionType.SPREAD,Actor.environment());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFertilize(BlockFertilizeEvent e){if(!growth)return;Actor a=e.getPlayer()==null?Actor.environment():new Actor(e.getPlayer().getUniqueId(),e.getPlayer().getName());recordStates(e.getBlocks(),ActionType.GROW,a);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onStructureGrow(StructureGrowEvent e){if(!growth)return;Actor a=e.getPlayer()==null?Actor.environment():new Actor(e.getPlayer().getUniqueId(),e.getPlayer().getName());recordStates(e.getBlocks(),ActionType.GROW,a);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onFluid(BlockFromToEvent e){if(!fluids)return;Block b=e.getToBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEnvironment(b,ActionType.FLUID,before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onEntityChange(EntityChangeBlockEvent e){if(!entityChanges)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEntity(b,ActionType.ENTITY_CHANGE,e.getEntity(),before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onEntityForm(EntityBlockFormEvent e){if(!entityChanges)return;Block b=e.getBlock();BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.recordEntity(b,ActionType.FORM,e.getEntity(),before,BlockSnapshot.capture(b)));}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onPistonExtend(BlockPistonExtendEvent e){if(piston)recordPiston(e.getBlocks(),e.getDirection());}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void onPistonRetract(BlockPistonRetractEvent e){if(piston)recordPiston(e.getBlocks(),e.getDirection());}
 
-    public BlockAuditListener(Plugin plugin, AuditService audit, boolean placeBreak, boolean explosions, boolean fire,
-                               boolean piston, boolean fluids, boolean growth, boolean entityChanges) {
-        this.plugin = plugin;
-        this.audit = audit;
-        this.placeBreak = placeBreak;
-        this.explosions = explosions;
-        this.fire = fire;
-        this.piston = piston;
-        this.fluids = fluids;
-        this.growth = growth;
-        this.entityChanges = entityChanges;
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBreak(BlockBreakEvent event) {
-        if (!placeBreak) return;
-        final Block block = event.getBlock();
-        final BlockSnapshot before = BlockSnapshot.capture(block);
-        later(block, () -> audit.recordPlayer(block, ActionType.BREAK, event.getPlayer(), before, BlockSnapshot.capture(block)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPlace(BlockPlaceEvent event) {
-        if (!placeBreak || event instanceof BlockMultiPlaceEvent) return;
-        final Block block = event.getBlockPlaced();
-        final BlockSnapshot before = BlockSnapshot.fromState(event.getBlockReplacedState());
-        later(block, () -> audit.recordPlayer(block, ActionType.PLACE, event.getPlayer(), before, BlockSnapshot.capture(block)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onMultiPlace(BlockMultiPlaceEvent event) {
-        if (!placeBreak) return;
-        final List<BlockSnapshot> before = new ArrayList<>();
-        final List<Block> blocks = new ArrayList<>();
-        for (var state : event.getReplacedBlockStates()) {
-            blocks.add(state.getBlock());
-            before.add(BlockSnapshot.fromState(state));
-        }
-        if (blocks.isEmpty()) return;
-        later(blocks.getFirst(), () -> {
-            for (int i = 0; i < blocks.size(); i++) {
-                final Block block = blocks.get(i);
-                audit.recordPlayer(block, ActionType.PLACE, event.getPlayer(), before.get(i), BlockSnapshot.capture(block));
-            }
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBurn(BlockBurnEvent event) {
-        if (!fire) return;
-        final Block block = event.getBlock();
-        final BlockSnapshot before = BlockSnapshot.capture(block);
-        later(block, () -> audit.recordEnvironment(block, ActionType.BURN, before, BlockSnapshot.capture(block)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onBlockExplosion(BlockExplodeEvent event) {
-        if (!explosions) return;
-        final List<Block> blocks = List.copyOf(event.blockList());
-        final List<BlockSnapshot> before = blocks.stream().map(BlockSnapshot::capture).toList();
-        if (blocks.isEmpty()) return;
-        later(blocks.getFirst(), () -> {
-            for (int i = 0; i < blocks.size(); i++) {
-                final Block block = blocks.get(i);
-                audit.recordEnvironment(block, ActionType.EXPLOSION, before.get(i), BlockSnapshot.capture(block));
-            }
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onEntityExplosion(EntityExplodeEvent event) {
-        if (!explosions) return;
-        final List<Block> blocks = List.copyOf(event.blockList());
-        final List<BlockSnapshot> before = blocks.stream().map(BlockSnapshot::capture).toList();
-        if (blocks.isEmpty()) return;
-        later(blocks.getFirst(), () -> {
-            for (int i = 0; i < blocks.size(); i++) {
-                final Block block = blocks.get(i);
-                audit.recordEntity(block, ActionType.EXPLOSION, event.getEntity(), before.get(i), BlockSnapshot.capture(block));
-            }
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onFade(BlockFadeEvent event) {
-        if (!growth) return;
-        recordAfter(event.getBlock(), ActionType.FORM, Actor.environment(), BlockSnapshot.capture(event.getBlock()));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onForm(BlockFormEvent event) {
-        if (!growth) return;
-        recordAfter(event.getBlock(), ActionType.FORM, Actor.environment(), BlockSnapshot.capture(event.getBlock()));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onGrow(BlockGrowEvent event) {
-        if (!growth) return;
-        recordAfter(event.getBlock(), ActionType.GROW, Actor.environment(), BlockSnapshot.capture(event.getBlock()));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onSpread(BlockSpreadEvent event) {
-        if (!growth) return;
-        recordAfter(event.getBlock(), ActionType.SPREAD, Actor.environment(), BlockSnapshot.capture(event.getBlock()));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onFertilize(BlockFertilizeEvent event) {
-        if (!growth) return;
-        final Actor actor = event.getPlayer() == null ? Actor.environment() : new Actor(event.getPlayer().getUniqueId(), event.getPlayer().getName());
-        final List<Block> blocks = event.getBlocks().stream().map(state -> state.getBlock()).toList();
-        final List<BlockSnapshot> before = blocks.stream().map(BlockSnapshot::capture).toList();
-        if (blocks.isEmpty()) return;
-        later(blocks.getFirst(), () -> {
-            for (int i = 0; i < blocks.size(); i++) audit.record(blocks.get(i), ActionType.GROW, actor, before.get(i), BlockSnapshot.capture(blocks.get(i)));
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onStructureGrow(StructureGrowEvent event) {
-        if (!growth) return;
-        final Actor actor = event.getPlayer() == null ? Actor.environment() : new Actor(event.getPlayer().getUniqueId(), event.getPlayer().getName());
-        final List<Block> blocks = event.getBlocks().stream().map(state -> state.getBlock()).toList();
-        final List<BlockSnapshot> before = blocks.stream().map(BlockSnapshot::capture).toList();
-        if (blocks.isEmpty()) return;
-        later(blocks.getFirst(), () -> {
-            for (int i = 0; i < blocks.size(); i++) audit.record(blocks.get(i), ActionType.GROW, actor, before.get(i), BlockSnapshot.capture(blocks.get(i)));
-        });
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onFluid(BlockFromToEvent event) {
-        if (!fluids) return;
-        final Block destination = event.getToBlock();
-        final BlockSnapshot before = BlockSnapshot.capture(destination);
-        later(destination, () -> audit.recordEnvironment(destination, ActionType.FLUID, before, BlockSnapshot.capture(destination)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onEntityChange(EntityChangeBlockEvent event) {
-        if (!entityChanges) return;
-        final Block block = event.getBlock();
-        final BlockSnapshot before = BlockSnapshot.capture(block);
-        later(block, () -> audit.recordEntity(block, ActionType.ENTITY_CHANGE, event.getEntity(), before, BlockSnapshot.capture(block)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onEntityForm(EntityBlockFormEvent event) {
-        if (!entityChanges) return;
-        final Block block = event.getBlock();
-        final BlockSnapshot before = BlockSnapshot.capture(block);
-        later(block, () -> audit.recordEntity(block, ActionType.FORM, event.getEntity(), before, BlockSnapshot.capture(block)));
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPistonExtend(BlockPistonExtendEvent event) {
-        if (piston) recordPiston(event.getBlocks(), event.getDirection());
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onPistonRetract(BlockPistonRetractEvent event) {
-        if (piston) recordPiston(event.getBlocks(), event.getDirection().getOppositeFace());
-    }
-
-    private void recordPiston(List<Block> blocks, BlockFace direction) {
-        if (blocks.isEmpty()) return;
-        final List<Block> sources = List.copyOf(blocks);
-        final List<Block> destinations = sources.stream().map(block -> block.getRelative(direction)).toList();
-        final List<BlockSnapshot> sourceBefore = sources.stream().map(BlockSnapshot::capture).toList();
-        final List<BlockSnapshot> destinationBefore = destinations.stream().map(BlockSnapshot::capture).toList();
-        later(sources.getFirst(), () -> {
-            for (int i = 0; i < sources.size(); i++) {
-                final Block source = sources.get(i);
-                final Block destination = destinations.get(i);
-                audit.recordEnvironment(source, ActionType.PISTON, sourceBefore.get(i), BlockSnapshot.capture(source));
-                audit.recordEnvironment(destination, ActionType.PISTON, destinationBefore.get(i), BlockSnapshot.capture(destination));
-            }
-        });
-    }
-
-    private void recordAfter(Block block, ActionType action, Actor actor, BlockSnapshot ignored) {
-        final BlockSnapshot before = BlockSnapshot.capture(block);
-        later(block, () -> audit.record(block, action, actor, before, BlockSnapshot.capture(block)));
-    }
-
-    private void later(Block block, Runnable task) {
-        Bukkit.getRegionScheduler().runDelayed(plugin, block.getWorld(), block.getChunk().getX(), block.getChunk().getZ(), ignored -> task.run(), 1L);
-    }
+    private void recordPiston(List<Block> moved,BlockFace direction){if(moved.isEmpty())return;Map<BlockKey,Block> affected=new LinkedHashMap<>();for(Block b:moved){affected.putIfAbsent(new BlockKey(b),b);affected.putIfAbsent(new BlockKey(b.getRelative(direction)),b.getRelative(direction));}List<Block>blocks=List.copyOf(affected.values());List<BlockSnapshot>before=blocks.stream().map(BlockSnapshot::capture).toList();Block anchor=moved.getFirst();later(anchor,()->{for(int i=0;i<blocks.size();i++)audit.recordEnvironment(blocks.get(i),ActionType.PISTON,before.get(i),BlockSnapshot.capture(blocks.get(i)));});}
+    private void recordMany(List<Block>blocks,ActionType action,org.bukkit.entity.Entity entity){if(blocks.isEmpty())return;List<Block>unique=new ArrayList<>();Map<BlockKey,BlockSnapshot>before=new LinkedHashMap<>();for(Block b:blocks)if(before.putIfAbsent(new BlockKey(b),BlockSnapshot.capture(b))==null)unique.add(b);Block anchor=unique.getFirst();later(anchor,()->{for(Block b:unique){BlockSnapshot s=before.get(new BlockKey(b));if(entity==null)audit.recordEnvironment(b,action,s,BlockSnapshot.capture(b));else audit.recordEntity(b,action,entity,s,BlockSnapshot.capture(b));}});}
+    private void recordStates(List<? extends org.bukkit.block.BlockState>states,ActionType action,Actor actor){if(states.isEmpty())return;List<Block>blocks=states.stream().map(org.bukkit.block.BlockState::getBlock).toList();List<BlockSnapshot>before=states.stream().map(BlockSnapshot::fromState).toList();later(blocks.getFirst(),()->{for(int i=0;i<blocks.size();i++)audit.record(blocks.get(i),action,actor,before.get(i),BlockSnapshot.capture(blocks.get(i)));});}
+    private void recordAfter(Block b,ActionType action,Actor actor){BlockSnapshot before=BlockSnapshot.capture(b);later(b,()->audit.record(b,action,actor,before,BlockSnapshot.capture(b)));}
+    private void later(Block b,Runnable task){Bukkit.getRegionScheduler().runDelayed(plugin,b.getWorld(),b.getChunk().getX(),b.getChunk().getZ(),ignored->task.run(),1L);}
+    private record BlockKey(java.util.UUID world,int x,int y,int z){BlockKey(Block b){this(b.getWorld().getUID(),b.getX(),b.getY(),b.getZ());}}
 }
