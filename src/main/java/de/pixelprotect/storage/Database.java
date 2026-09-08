@@ -151,7 +151,9 @@ public final class Database implements AutoCloseable {
         final QuerySql built = buildQuery(query, true);
         try (PreparedStatement statement = connection.prepareStatement(built.sql())) {
             bind(statement, built.params());
-            try (ResultSet result = statement.executeQuery()) return result.next() ? result.getLong(1) : 0L;
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getLong(1) : 0L;
+            }
         }
     }
 
