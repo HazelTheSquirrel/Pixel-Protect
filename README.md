@@ -1,45 +1,45 @@
 # PixelProtect
 
-Standalone forensic world history, inventory/container logging, inspection and conflict-safe rollback for Paper 26.2+.
+PixelProtect is a standalone forensic world-history, inventory/container audit, inspection and conflict-safe rollback plugin for Paper 26.2+.
 
-## Runtime
+## Release contract
 
 - Paper 26.2 build 121 target.
 - Java 25 only.
 - Mojang-mapped Paper development bundle; no CraftBukkit or versioned NMS packages.
 - Modern `paper-plugin.yml` and Paper lifecycle command registration.
-- Folia-safe region scheduling for all asynchronous world-state hand-offs.
+- Folia-safe region scheduling for every asynchronous hand-off that touches world state.
 - `/pixelprotect` is the only command root.
-- SQLite by default; MySQL/MariaDB through HikariCP + Connector/J.
+- SQLite is the default backend; MySQL/MariaDB is supported through HikariCP and Connector/J.
 - No PixelRPG or other plugin dependency.
 
-## Logging
+## Forensic logging
 
 PixelProtect records player block placement/breakage and multi-block placement, explosions, fire, growth/spread, fluids, pistons, entity-caused block changes, buckets, cauldrons, modern Paper block mechanics, signs, player interaction, chat, commands, sessions, entity interaction, entity lifecycle, items, projectiles, crafting, trading and container processing.
 
-Audit records contain exact before/after Paper `BlockData`, block-entity state and inventory snapshots where applicable. Multi-location events receive a transaction UUID and deterministic sequence.
+Persisted audit entries contain exact before/after Paper `BlockData`, block-entity state and inventory snapshots where applicable. Multi-location events receive one transaction UUID with deterministic sequence numbers. Forensic metadata is stored separately from reversible block state so non-mutating activity cannot be mistaken for a rollback transition.
 
-Entity records use a defensive Paper `EntitySnapshot` plus runtime and causal metadata. Dedicated entity and inventory audit tables retain the forensic transaction relationship.
+Entity records use defensive public Paper `EntitySnapshot` data plus runtime and causal metadata. Dedicated entity and inventory audit tables preserve the transaction relationship.
 
-Automation logging correlates hopper/dropper/dispenser/crafter mechanisms with source, destination, mechanism location and recorded owner. Owner resolution can fall back to placement history without touching Bukkit state from a database worker thread.
+Automation attribution correlates hopper/dropper/dispenser/crafter mechanisms with source, destination, mechanism location and recorded owner. Owner resolution can fall back to placement history without reading Bukkit world state from a database worker.
 
 ## Inspector
 
-`/pixelprotect inspect` toggles inspector mode. Left- or right-clicking a block performs an asynchronous database lookup and presents actor, action, timestamp, coordinates, inventory deltas and available automation source/destination/mechanism context to the player.
+`/pixelprotect inspect` toggles inspector mode. Left- or right-clicking a block captures the relevant immutable coordinates and performs the database lookup asynchronously. Results are returned through the appropriate scheduler and include actor, action, timestamp, coordinates, inventory deltas and available automation context.
 
-## Rollback
+## Rollback and restore
 
-Rollback jobs are persisted, chunk-grouped and executed through Paper's region scheduler. A recorded post-state is verified immediately before every mutation. Inventory and block-entity state are guarded by the same conflict check.
+Rollback jobs are persisted, chunk-grouped and executed through Paper's region scheduler. Before each mutation, the live post-state is compared with the recorded post-state. BlockData, inventory and supported block-entity state are guarded together; unsupported block-entity restoration never silently succeeds.
 
-Entity rollback handles both entity-present and entity-absent transitions, recreating recorded non-player entities when their UUID state is conflict-free. Applied entries are persisted so a completed rollback can be restored.
+Entity rollback distinguishes expected-present and expected-absent state and recreates recorded non-player entities only when the live state is conflict-free. Applied entries are persisted, allowing a completed rollback to be restored through its inverse transition.
 
-Interrupted `RUNNING` jobs are converted to `FAILED` during startup rather than being treated as successful.
+Interrupted `RUNNING` jobs are persisted as `FAILED` during startup instead of being treated as successful.
 
-## Storage
+## Storage and durability
 
-The hot audit path uses a bounded in-memory queue. Saturated records are handed to a dedicated overflow writer queue; disk writes therefore never occur on a server event or region thread. Overflow replay is serialized against active spool writes.
+The hot audit path performs bounded, non-blocking in-memory queue insertion. Saturated records are serialized and handed to a dedicated overflow writer. Event and region threads never perform overflow disk I/O. Overflow replay is serialized against active spool writes.
 
-SQLite runs with WAL, foreign-key enforcement and a busy timeout. MySQL/MariaDB uses the configured HikariCP pool. Required tables are created automatically.
+SQLite uses WAL, foreign-key enforcement and a busy timeout. MySQL/MariaDB uses a HikariCP-managed connection pool and automatic schema creation/migration. The current schema is version 8.
 
 ## Commands
 
@@ -55,7 +55,7 @@ SQLite runs with WAL, foreign-key enforcement and a busy timeout. MySQL/MariaDB 
 - `/pixelprotect restore <job>`
 - `/pixelprotect purge <days>`
 
-Selectors support actor, time, radius/world/chunk/coordinate restrictions, action inclusion/exclusion and pagination/count/preview controls.
+Selectors support actor, time, radius/world/chunk/coordinate restrictions, action inclusion/exclusion, block inclusion/exclusion and pagination/count/preview controls.
 
 ## Build
 
@@ -65,4 +65,4 @@ gradle clean build
 
 The release artifact is `build/libs/PixelProtect.jar`.
 
-See `docs/ARCHITECTURE.md` and `PIXELPROTECT_ROADMAP.md` for the final implementation contract and threading model.
+The implementation contract and threading model are documented in `docs/ARCHITECTURE.md`.
