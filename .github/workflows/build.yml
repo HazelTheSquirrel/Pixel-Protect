@@ -92,17 +92,50 @@ jobs:
             "$paper_url" \
             --output integration-server/paper.jar
 
-          (cd integration-server && java -Xms512M -Xmx1G -jar paper.jar --nogui > server.log 2>&1 & echo $! > server.pid)
-          for i in $(seq 1 90); do
-            if grep -q 'Done (' integration-server/server.log 2>/dev/null; then break; fi
-            if grep -q 'Failed to load' integration-server/server.log 2>/dev/null; then cat integration-server/server.log; exit 1; fi
+          server_pid=''
+          cleanup() {
+            if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+              kill "$server_pid" 2>/dev/null || true
+              for _ in $(seq 1 10); do
+                if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+                sleep 1
+              done
+              kill -9 "$server_pid" 2>/dev/null || true
+            fi
+            echo '--- Paper server log (last 300 lines) ---'
+            tail -n 300 integration-server/server.log 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          cd integration-server
+          java -Xms512M -Xmx1G -jar paper.jar --nogui > server.log 2>&1 &
+          server_pid=$!
+
+          for i in $(seq 1 120); do
+            if grep -q 'Done (' server.log 2>/dev/null; then
+              break
+            fi
+            if grep -Eq 'Failed to load|Could not load|Exception in thread|ERROR.*PixelProtect|SEVERE.*PixelProtect' server.log 2>/dev/null; then
+              echo 'Paper reported a startup failure:'
+              cat server.log
+              exit 1
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo 'Paper terminated before startup completed.'
+              cat server.log
+              exit 1
+            fi
             sleep 2
           done
-          grep -q 'Done (' integration-server/server.log
-          grep -q 'PixelProtect enabled' integration-server/server.log
-          kill "$(cat integration-server/server.pid)" || true
-          sleep 2
-          tail -n 200 integration-server/server.log
+
+          if ! grep -q 'Done (' server.log; then
+            echo 'Paper did not reach the ready state within 240 seconds.'
+            cat server.log
+            exit 1
+          fi
+
+          grep -q 'PixelProtect wurde mit Speicher-Backend' server.log
+          echo 'Paper 26.2 startup smoke test passed.'
 
       - name: Upload plugin
         uses: actions/upload-artifact@v4
