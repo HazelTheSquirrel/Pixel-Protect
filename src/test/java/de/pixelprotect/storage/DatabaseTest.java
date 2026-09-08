@@ -14,7 +14,7 @@ class DatabaseTest {
         try { db.open(); assertEquals(5,db.schemaVersion()); UUID world=UUID.randomUUID();
             for(int i=0;i<3;i++) db.record(new AuditEntry(0,System.currentTimeMillis()+i,world,i,64,0,null,"Environment",ActionType.BREAK,"minecraft:stone","minecraft:air",null,null,"{\"kind\":\"sign\"}","{\"kind\":\"sign\"}"));
             var q=new AuditQuery(world,1,64,0,16,0,Long.MAX_VALUE,null,Set.of(),Set.of(),Set.of(),Set.of(),2,1);
-            assertEquals(3,db.count(q).join()); assertEquals(2,db.query(q).join().size()); assertEquals(3,db.query(q).join().getFirst().id() == 0 ? 0 : 1);
+            assertEquals(3,db.count(q).join()); var page=db.query(q).join(); assertEquals(2,page.size()); assertTrue(page.getFirst().id()>0);
         } finally { db.close(); }
     }
 }
