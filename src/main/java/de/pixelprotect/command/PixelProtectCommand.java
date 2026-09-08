@@ -120,7 +120,7 @@ public final class PixelProtectCommand {
         database.query(query).thenCompose(entries -> {
             if (entries.isEmpty()) {
                 send(sender, parsed.preview() ? "PixelProtect: preview found no matching records." : "PixelProtect: nothing to rollback.");
-                return CompletableFuture.completedFuture(null);
+                return CompletableFuture.<String>completedFuture(null);
             }
             if (parsed.preview()) {
                 send(sender, "PixelProtect: evaluating rollback guards for " + entries.size() + " record(s)...");
