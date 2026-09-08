@@ -11,11 +11,11 @@ import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.InspectService;
 import de.pixelprotect.service.RollbackService;
 import de.pixelprotect.storage.Database;
+import de.pixelprotect.storage.MySqlDatabase;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
-
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.HashSet;
@@ -24,93 +24,17 @@ import java.util.Set;
 import java.util.UUID;
 
 public final class PixelProtect extends JavaPlugin {
-    private Database database;
-    private PixelProtectApiImpl api;
-
-    @Override
-    public void onEnable() {
-        saveDefaultConfig();
-        final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
-        try {
-            database = new Database(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000), getConfig().getInt("storage.batch-size", 256),
-                    getConfig().getLong("storage.flush-interval-millis", 250L), getLogger());
-            database.open();
-        } catch (SQLException | java.io.IOException exception) {
-            getLogger().severe("Failed to initialize SQLite: " + exception.getMessage());
-            getServer().getPluginManager().disablePlugin(this);
-            return;
-        }
-
-        final Set<UUID> includedWorlds = resolveWorlds(getConfig().getStringList("worlds.include"));
-        final Set<UUID> excludedWorlds = resolveWorlds(getConfig().getStringList("worlds.exclude"));
-        final AuditService audit = new AuditService(database, includedWorlds, excludedWorlds);
-        api = new PixelProtectApiImpl(database, includedWorlds, excludedWorlds, databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
-        getServer().getServicesManager().register(PixelProtectApi.class, api, this, ServicePriority.Normal);
-
-        final InspectService inspect = new InspectService(database);
-        final RollbackService rollback = new RollbackService(this, audit, database);
-        getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
-                getConfig().getBoolean("logging.block-place-break", true),
-                getConfig().getBoolean("logging.explosions", true),
-                getConfig().getBoolean("logging.fire", true),
-                getConfig().getBoolean("logging.piston", true),
-                getConfig().getBoolean("logging.fluids", true),
-                getConfig().getBoolean("logging.growth", true),
-                getConfig().getBoolean("logging.entity-block-changes", true)), this);
-        getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
-        getServer().getPluginManager().registerEvents(new InventoryAuditListener(this, audit), this);
-        getServer().getPluginManager().registerEvents(new InspectListener(this, inspect), this);
-
-        final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect,
-                getConfig().getInt("rollback.max-hours", 168), getConfig().getInt("rollback.max-radius", 128), getConfig().getInt("rollback.max-records", 100_000));
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands -> {
-            final var builder = command.create().build();
-            commands.registrar().register(builder, "Audit and rollback world changes");
-        });
-
-        if (getConfig().getBoolean("retention.enabled", true)) {
-            final int days = Math.max(1, getConfig().getInt("retention.days", 30));
-            final long interval = Math.max(1L, getConfig().getLong("retention.maintenance-interval-ticks", 24_000L));
-            Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task ->
-                    database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L)
-                            .thenAccept(api::addRetentionPurged), 20L, interval);
-        }
-
-        if (getConfig().getBoolean("diagnostics.enabled", true)) {
-            final long interval = Math.max(1L, getConfig().getLong("diagnostics.log-interval-minutes", 5L) * 1200L);
-            Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task -> logDiagnostics(), interval, interval);
-        }
-        getLogger().info("PixelProtect enabled. Standalone audit core is ready.");
-    }
-
-    private void logDiagnostics() {
-        if (api == null) return;
-        final var d = api.diagnostics();
-        getLogger().info("Diagnostics: queue=" + d.queueSize() + ", audits=" + d.auditCount() + ", overflow=" + d.overflowRecords() + ", schema=" + d.schemaVersion());
-    }
-
-    private Set<UUID> resolveWorlds(List<String> names) {
-        final Set<UUID> result = new HashSet<>();
-        for (String name : names) {
-            final var world = Bukkit.getWorld(name);
-            if (world == null) getLogger().warning("Configured world does not exist: " + name);
-            else result.add(world.getUID());
-        }
-        return Set.copyOf(result);
-    }
-
-    public PixelProtectApi api() { return api; }
-
-    @Override
-    public void onDisable() {
-        if (api != null) {
-            getServer().getServicesManager().unregisterAll(this);
-            api.shutdown();
-            api = null;
-        }
-        if (database != null) {
-            database.close();
-            database = null;
-        }
-    }
+    private Database database;private PixelProtectApiImpl api;
+    @Override public void onEnable(){saveDefaultConfig();final String backend=getConfig().getString("storage.backend","sqlite").trim().toLowerCase(java.util.Locale.ROOT);final Path databaseFile=getDataFolder().toPath().resolve(getConfig().getString("storage.file","pixelprotect.db"));
+        try{database=switch(backend){case "sqlite"->new Database(databaseFile,getConfig().getInt("storage.queue-capacity",10_000),getConfig().getInt("storage.batch-size",256),getConfig().getLong("storage.flush-interval-millis",250L),getLogger());case "mysql","mariadb"->new MySqlDatabase(databaseFile,getConfig().getInt("storage.queue-capacity",10_000),getConfig().getInt("storage.batch-size",256),getConfig().getLong("storage.flush-interval-millis",250L),getLogger(),getConfig().getString("storage.mysql.jdbc-url"),getConfig().getString("storage.mysql.username"),getConfig().getString("storage.mysql.password"),getConfig().getInt("storage.mysql.maximum-pool-size",10),getConfig().getInt("storage.mysql.minimum-idle",2),getConfig().getLong("storage.mysql.connection-timeout-millis",5000L),getConfig().getLong("storage.mysql.leak-detection-millis",0L));default->throw new IllegalArgumentException("Unsupported storage.backend: "+backend);};database.open();}
+        catch(IllegalArgumentException|SQLException|java.io.IOException ex){getLogger().severe("Failed to initialize storage backend '"+backend+"': "+ex.getMessage());getServer().getPluginManager().disablePlugin(this);return;}
+        final Set<UUID>includedWorlds=resolveWorlds(getConfig().getStringList("worlds.include"));final Set<UUID>excludedWorlds=resolveWorlds(getConfig().getStringList("worlds.exclude"));final AuditService audit=new AuditService(database,includedWorlds,excludedWorlds);api=new PixelProtectApiImpl(database,includedWorlds,excludedWorlds,databaseFile.resolveSibling(databaseFile.getFileName()+".overflow.jsonl"));getServer().getServicesManager().register(PixelProtectApi.class,api,this,ServicePriority.Normal);
+        final InspectService inspect=new InspectService(database);final RollbackService rollback=new RollbackService(this,audit,database);getServer().getPluginManager().registerEvents(new BlockAuditListener(this,audit,getConfig().getBoolean("logging.block-place-break",true),getConfig().getBoolean("logging.explosions",true),getConfig().getBoolean("logging.fire",true),getConfig().getBoolean("logging.piston",true),getConfig().getBoolean("logging.fluids",true),getConfig().getBoolean("logging.growth",true),getConfig().getBoolean("logging.entity-block-changes",true)),this);getServer().getPluginManager().registerEvents(new PlayerAuditListener(this,audit),this);getServer().getPluginManager().registerEvents(new InventoryAuditListener(this,audit),this);getServer().getPluginManager().registerEvents(new InspectListener(this,inspect),this);
+        final PixelProtectCommand command=new PixelProtectCommand(this,database,rollback,inspect,getConfig().getInt("rollback.max-hours",168),getConfig().getInt("rollback.max-radius",128),getConfig().getInt("rollback.max-records",100_000));getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,commands->commands.registrar().register(command.create().build(),"Audit and rollback world changes"));
+        if(getConfig().getBoolean("retention.enabled",true)){final int days=Math.max(1,getConfig().getInt("retention.days",30));final long interval=Math.max(1L,getConfig().getLong("retention.maintenance-interval-ticks",24_000L));Bukkit.getGlobalRegionScheduler().runAtFixedRate(this,task->database.purgeBefore(System.currentTimeMillis()-days*86_400_000L).thenAccept(api::addRetentionPurged),20L,interval);}
+        if(getConfig().getBoolean("diagnostics.enabled",true)){final long interval=Math.max(1L,getConfig().getLong("diagnostics.log-interval-minutes",5L)*1200L);Bukkit.getGlobalRegionScheduler().runAtFixedRate(this,task->logDiagnostics(),interval,interval);}getLogger().info("PixelProtect enabled using storage backend: "+backend);}
+    private void logDiagnostics(){if(api==null)return;final var d=api.diagnostics();getLogger().info("Diagnostics: queue="+d.queueSize()+", audits="+d.auditCount()+", overflow="+d.overflowRecords()+", failedRollbacks="+d.failedRollbacks()+", schema="+d.schemaVersion());}
+    private Set<UUID>resolveWorlds(List<String>names){final Set<UUID>r=new HashSet<>();for(String name:names){final var w=Bukkit.getWorld(name);if(w==null)getLogger().warning("Configured world does not exist: "+name);else r.add(w.getUID());}return Set.copyOf(r);}
+    public PixelProtectApi api(){return api;}
+    @Override public void onDisable(){if(api!=null){getServer().getServicesManager().unregisterAll(this);api.shutdown();api=null;}if(database!=null){database.close();database=null;}}
 }
