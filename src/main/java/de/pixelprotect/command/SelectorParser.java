@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** PixelProtect query grammar with lossless millisecond duration handling. */
+/** CoreProtect-compatible selector grammar with PixelProtect-specific action names. */
 public final class SelectorParser {
     private SelectorParser() {}
 
@@ -65,9 +65,33 @@ public final class SelectorParser {
 
     private static void addActions(String raw, Set<ActionType> include, Set<ActionType> exclude) {
         for (String part : raw.split(",")) {
-            String value = part.trim(); if (value.isEmpty()) continue; boolean negative = value.startsWith("-");
-            try { (negative ? exclude : include).add(ActionType.valueOf((negative ? value.substring(1) : value).toUpperCase(Locale.ROOT))); }
-            catch (IllegalArgumentException e) { throw new IllegalArgumentException("Unbekannte Aktion: " + value); }
+            String value = part.trim().toLowerCase(Locale.ROOT);
+            if (value.isEmpty()) continue;
+            boolean negative = value.startsWith("-");
+            String normalized = negative || value.startsWith("+") ? value.substring(1) : value;
+            Set<ActionType> target = negative ? exclude : include;
+            switch (normalized) {
+                case "block" -> { target.add(ActionType.BREAK); target.add(ActionType.PLACE); }
+                case "container" -> target.add(ActionType.CONTAINER);
+                case "inventory" -> target.add(ActionType.CONTAINER);
+                case "item" -> { target.add(ActionType.ITEM_DROP); target.add(ActionType.ITEM_PICKUP); target.add(ActionType.ITEM_DESPAWN); }
+                case "kill" -> target.add(ActionType.ENTITY_DEATH);
+                case "spawn" -> target.add(ActionType.ENTITY_SPAWN);
+                case "session", "login", "logout" -> target.add(ActionType.SESSION);
+                case "chat" -> target.add(ActionType.CHAT);
+                case "click", "interact" -> { target.add(ActionType.INTERACT); target.add(ActionType.ENTITY_INTERACT); }
+                case "command" -> target.add(ActionType.COMMAND);
+                case "sign" -> target.add(ActionType.SIGN);
+                case "craft" -> target.add(ActionType.CRAFT);
+                case "trade" -> target.add(ActionType.TRADE);
+                default -> {
+                    try { target.add(ActionType.valueOf(normalized.toUpperCase(Locale.ROOT))); }
+                    catch (IllegalArgumentException e) { throw new IllegalArgumentException("Unbekannte Aktion: " + value); }
+                }
+            }
+            if (value.startsWith("+")) {
+                // '+' explicitly means inclusion; the target is already include unless the token was malformed.
+            }
         }
     }
 
@@ -85,13 +109,7 @@ public final class SelectorParser {
             if (value.matches("\\d+")) return Duration.ofHours(Long.parseLong(value)).toMillis();
             char suffix = value.charAt(value.length() - 1);
             long number = Long.parseLong(value.substring(0, value.length() - 1));
-            return switch (suffix) {
-                case 's' -> Duration.ofSeconds(number).toMillis();
-                case 'm' -> Duration.ofMinutes(number).toMillis();
-                case 'h' -> Duration.ofHours(number).toMillis();
-                case 'd' -> Duration.ofDays(number).toMillis();
-                default -> throw new IllegalArgumentException("Zeitangabe muss z.B. 30s, 30m, 12h oder 7d sein.");
-            };
+            return switch (suffix) { case 's' -> Duration.ofSeconds(number).toMillis(); case 'm' -> Duration.ofMinutes(number).toMillis(); case 'h' -> Duration.ofHours(number).toMillis(); case 'd' -> Duration.ofDays(number).toMillis(); case 'w' -> Duration.ofDays(Math.multiplyExact(number, 7L)).toMillis(); default -> throw new IllegalArgumentException("Zeitangabe muss z.B. 30s, 30m, 12h oder 7d sein."); };
         } catch (ArithmeticException | NumberFormatException e) { throw new IllegalArgumentException("Ungültige Zeitangabe: " + raw); }
     }
 
