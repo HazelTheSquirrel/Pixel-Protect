@@ -23,9 +23,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '9.0.0'
+          gradle-version: '9.2.1'
       - name: Build
-        run: gradle build --no-daemon
+        run: gradle build --no-daemon --stacktrace
+      - name: Verify plugin artifact
+        shell: bash
+        run: |
+          test -f build/libs/PixelProtect.jar
+          unzip -p build/libs/PixelProtect.jar paper-plugin.yml | grep -q '^name: PixelProtect$'
       - name: Upload plugin
         uses: actions/upload-artifact@v4
         with:
