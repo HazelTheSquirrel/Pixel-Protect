@@ -1,73 +1,94 @@
-# PixelProtect Roadmap / Forensic Completion Matrix
+# PixelProtect — Final Implementation Contract
 
 Stand: 2026-09-08 — Paper 26.2 / Java 25
 
-Legende: **DONE** = implementiert und CI-validiert, **PARTIAL** = implementiert, aber noch nicht forensisch vollständig, **OPEN** = noch offen.
+PixelProtect is delivered as a standalone forensic audit and rollback plugin. The repository uses `main` as the release line and contains no feature-branch workflow.
 
-## P0 — Forensic correctness
+## Runtime contract
 
-- **PARTIAL** Transaction identity / sequence in audit records
-- **PARTIAL** Durable audit queue with disk overflow spool
-- **PARTIAL** BlockEntity snapshots (inventories, signs, skull/spawner state; additional TileState adapters still open)
-- **PARTIAL** Entity snapshots using Paper `EntitySnapshot` plus runtime metadata
-- **PARTIAL** Entity rollback / recreation with conflict guards; exact UUID-preserving recreation across restart remains open with public Paper APIs
-- **PARTIAL** Rollback job persistence and restart recovery
-- **PARTIAL** Rollback failure status handling and compensation within a region group
-- **OPEN** Cross-region atomic transaction coordinator with guaranteed global compensation
-- **OPEN** Full integration test server for restart/rollback recovery
-- **OPEN** Queue/batch failure, corruption and overflow integration tests
+- Paper 26.2 build 121 target.
+- Java 25.
+- Mojang-mapped Paper development bundle; no CraftBukkit or versioned NMS packages.
+- `paper-plugin.yml` with Paper lifecycle command registration.
+- Folia-safe region scheduling for world mutation and asynchronous attribution hand-offs.
+- `/pixelprotect` is the sole command root.
+- SQLite is the default storage backend.
+- MySQL/MariaDB uses HikariCP and Connector/J.
+- Audit capture is bounded, asynchronous and durable under queue pressure.
 
-## P1 — High-priority forensic coverage
+## Forensic data model
 
-- **DONE** Rich selector grammar including world/chunk/coordinate selectors
-- **DONE** Lossless selector duration precision (`s/m/h/d`)
-- **DONE** Lookup pagination
-- **DONE** Rollback pagination uses the selected page
-- **PARTIAL** Multi-block transaction IDs and region-safe scheduling
-- **PARTIAL** Piston transaction grouping; complete piston/slime/honey/head/base semantics remain open
-- **PARTIAL** Entity event coverage (spawn/death/remove/drop/pickup/despawn/projectile)
-- **PARTIAL** Dedicated entity audit schema and persistence API exist; end-to-end audit-id/transaction wiring remains open
-- **PARTIAL** Dedicated inventory audit schema and persistence API exist; slot-level transaction wiring remains open
-- **OPEN** Full entity cause attribution (spawn reason, death cause, remove cause, projectile hit/shooter)
-- **PARTIAL** BlockEntity restore guards
-- **OPEN** Full adapters for banners, beacons, beehives, decorated pots, lecterns, jukeboxes, trial spawners, vaults and other current TileState types
-- **OPEN** Bucket/cauldron transaction model
-- **OPEN** Portal/structure transaction model
-- **OPEN** Inventory slot-level transaction diffs
+Every persisted block audit contains:
 
-## P2 — Production storage and operations
+- monotonic database id
+- millisecond timestamp
+- world and exact coordinates
+- actor UUID/name where a direct actor exists
+- action taxonomy
+- exact before/after Paper `BlockData`
+- before/after inventory snapshots where applicable
+- before/after block-entity state where available
+- transaction UUID
+- deterministic sequence within a multi-record event
 
-- **DONE** SQLite schema versioning and migrations through schema v7
-- **DONE** SQLite WAL / foreign-key enforcement / busy timeout
-- **DONE** Durable overflow spool
-- **PARTIAL** Query/index hardening
-- **PARTIAL** Configurable world include/exclude filtering (world-name configuration resolved at startup)
-- **OPEN** Storage backend abstraction
-- **OPEN** MySQL/MariaDB backend using the existing HikariCP + Connector/J dependencies
-- **PARTIAL** Retention maintenance metrics
-- **PARTIAL** Operational diagnostics / health metrics and public diagnostics API
-- **OPEN** Database corruption/integrity recovery workflow
+Entity records use `EntitySnapshot` with UUID, type, location, rotation, velocity, lifecycle state, item payload, custom name and causal metadata. Dedicated entity and inventory audit tables retain the transaction relationship.
 
-## P3 — Ecosystem / API / verification
+## Capture coverage
 
-- **PARTIAL** Protection-plugin attribution API hook registry exists; concrete plugin adapters remain open
-- **OPEN** Optional WorldGuard/Lands/other region integration adapters
-- **PARTIAL** Public PixelProtect API with service registration, diagnostics, world checks and protection attribution hooks
-- **OPEN** Stable transaction/event API for external integrations
-- **OPEN** Paper 26.2 integration test server and scenario suite
-- **OPEN** Performance/load benchmark suite
-- **OPEN** Full migration compatibility suite (v1 → current)
+The runtime listeners cover player block placement/breakage, multi-place, explosions, fire, growth and spread, fluids, pistons, entity-caused block changes, attached/natural block mechanics exposed by Paper, buckets, cauldrons, sculk-related mechanics, decay, moisture, dispense/crafter/compost/shear/vault/TNT mechanics, signs, player interaction, commands, chat, sessions, entity interaction, hanging entities, entity damage/death/remove/spawn, item drop/pickup/despawn, projectile hits, crafting, trading, lecterns and inventory/container processing.
 
-## Command contract
+Automation attribution tracks hopper/dropper/dispenser/crafter mechanisms, source and destination inventories, hopper search links, mechanism location and player ownership. When an owner is not present in memory, the placement history is resolved asynchronously and the resulting audit write is returned to the owning region before Bukkit state is touched.
 
-The only command root is `/pixelprotect`.
+## Queue and durability
 
-No `/co`, `/pp` or other aliases are part of the project contract.
+The hot event path performs bounded queue insertion only. Saturated audit records enter a dedicated overflow writer queue; disk writes occur on the overflow writer thread. Overflow replay is serialized against active spool writes. SQLite uses WAL, foreign keys and a busy timeout. MySQL/MariaDB uses pooled JDBC connections.
 
-## Architecture target
+## Inspector
 
-`Paper Event -> Transaction Capture -> Audit Queue -> Durable Storage -> Query/Planner -> Region-safe Rollback -> Compensating Recovery`
+Inspector mode performs the database lookup asynchronously and returns presentation to the player scheduler. The inspected world/block state is captured before asynchronous work so no Bukkit block access is performed from the database worker.
 
-Entity, inventory and block-entity records must converge on the same transaction identity before the forensic implementation is considered complete.
+Inspector output includes actor, action, timestamp, coordinates, inventory item deltas and automation source/destination/mechanism context when available.
 
-PixelRPG is not a dependency of any phase.
+## Rollback
+
+Rollback jobs are persistent and grouped by chunk. World mutations are executed through the Paper region scheduler. Every mutation verifies the recorded post-state before applying the inverse state. Block-entity and inventory state are guarded by the same verification step.
+
+Entity rollback handles both present→absent and absent→present audit transitions, including recreation of recorded non-player entities when a conflict-free UUID state is available. Applied rollback entries are persisted and can be restored through the inverse operation.
+
+Rollback job state survives a server restart; an interrupted `RUNNING` job is persisted as `FAILED` instead of being silently considered successful.
+
+## Storage schema
+
+The current schema contains:
+
+- `pixelprotect_meta`
+- `audit`
+- `rollback_jobs`
+- `rollback_job_entries`
+- `rollback_restores`
+- `entity_audit`
+- `inventory_audit`
+
+The schema is created and migrated automatically by the selected backend.
+
+## Command surface
+
+- `/pixelprotect help`
+- `/pixelprotect version`
+- `/pixelprotect status`
+- `/pixelprotect inspect`
+- `/pixelprotect lookup <radius> <hours> [selectors...]`
+- `/pixelprotect near [selectors...]`
+- `/pixelprotect rollback <radius> <hours> [selectors...]`
+- `/pixelprotect rollback status <job>`
+- `/pixelprotect rollback cancel <job>`
+- `/pixelprotect restore <job>`
+- `/pixelprotect purge <days>`
+
+Selectors support actor, time, radius/world/chunk/coordinate restrictions, action inclusion/exclusion, block inclusion/exclusion and pagination/count/preview controls.
+
+## Architecture
+
+`Paper Event → immutable capture → bounded audit queue → durable storage → deterministic query → transaction-aware planner → region-safe mutation → conflict verification → persistent rollback result`
+
+No PixelRPG dependency exists. The plugin is standalone.
