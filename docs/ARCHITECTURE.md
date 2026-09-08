@@ -1,31 +1,53 @@
 # PixelProtect architecture
 
-PixelProtect is intentionally split into four responsibilities:
+PixelProtect is split into five responsibilities:
 
-- `model`: immutable audit-domain records and snapshots.
-- `listener`: Paper events translated into audit transactions.
-- `storage`: one-thread SQLite access with bounded ingestion and batched writes.
-- `service`: audit recording and guarded rollback orchestration.
-- `command`: Paper Brigadier command tree; command work never performs SQLite queries on a world thread.
+- `model`: immutable audit-domain records and block/entity snapshots.
+- `listener`: Paper 26.2 events translated into immutable audit transactions.
+- `storage`: durable SQLite/MySQL/MariaDB access, bounded ingestion, batched writes and overflow persistence.
+- `service`: attribution, automation correlation, inspection, inventory diffs and guarded rollback orchestration.
+- `command`: Paper Brigadier command tree; database work is asynchronous and world mutation remains region-bound.
 
 ## Threading contract
 
-World state is read and changed only from the owning Paper region thread. Database work is confined to the database executor. Rollback queries are asynchronous and mutations are grouped by chunk and dispatched through the region scheduler.
+The event/region hot path captures immutable values and performs only bounded queue operations. Disk writes for saturated queues happen on the dedicated overflow writer. Database queries and writes run on the storage executor or JDBC pool.
+
+Bukkit/Paper world state is never read from a database completion callback. When an asynchronous lookup needs world state, the callback schedules work back to the affected Paper region. Rollback uses the same rule.
 
 ## Audit transaction
 
-Each block transaction stores:
+A persisted audit entry contains:
 
 1. timestamp
-2. world UUID and coordinates
+2. world UUID and exact coordinates
 3. actor UUID/name when available
 4. action type
-5. complete `BlockData` string before the change
-6. complete `BlockData` string after the change
-7. inventory contents before/after for inventory-bearing block states
+5. exact Paper `BlockData` before and after
+6. inventory snapshots where applicable
+7. block-entity snapshots where applicable
+8. transaction UUID
+9. deterministic sequence number
 
-Rollback is conditional: the live block must still match the recorded post-change state, and when an inventory snapshot exists the live inventory must also match it. This prevents overwriting unrelated changes made after the audited transaction.
+Entity lifecycle records use the same audit transaction identity and additionally persist an `EntitySnapshot` containing identity, type, position, rotation, velocity, lifecycle flags, item payload and causal metadata.
 
-## Scope
+## Automation attribution
 
-The first implementation deliberately establishes a trustworthy block-history core. Container inventories are already part of the block transaction format. Entity inventories, item entities, chat/command attribution, advanced block-entity NBT, preview jobs, selectors and external database backends are separate capabilities and will be added behind explicit domain abstractions rather than by expanding one monolithic listener.
+Automation transfers are represented as a causal chain rather than a bare container mutation:
+
+`actor → placed mechanism → source → mechanism → destination → resulting inventory diff`
+
+Hopper search links and mechanism ownership are kept in memory for low-latency correlation. If the owner is absent from memory, placement history is queried asynchronously and the resulting write is returned to the owning region before any Bukkit block access occurs.
+
+## Rollback contract
+
+Rollback is persistent and conflict-aware. Entries are grouped by chunk and dispatched through `RegionScheduler`. A block is mutated only when its live `BlockData`, inventory state and recorded block-entity state match the audit post-state. Entity rollback uses the same present/absent state model and refuses conflicting UUID state.
+
+Every applied entry is persisted in `rollback_job_entries`. Completed jobs can be restored by evaluating the inverse transition with the same conflict guards.
+
+## Storage contract
+
+SQLite uses WAL, foreign keys and a busy timeout. MySQL/MariaDB uses HikariCP. Schema creation/migration is automatic. Rollback references protect audit rows from retention deletion. Overflow replay is serialized with active spool writes so the durable JSONL file cannot be moved while a writer is appending to it.
+
+## Command contract
+
+The only command root is `/pixelprotect`. Lookup, inspector, rollback, restore, purge, status and version operations all use the same asynchronous storage and region-safe mutation architecture.
