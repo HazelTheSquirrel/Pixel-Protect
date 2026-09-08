@@ -3,6 +3,7 @@ package de.pixelprotect.listener;
 import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
+import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -15,26 +16,29 @@ import org.bukkit.event.entity.ItemDespawnEvent;
 import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
+import org.bukkit.plugin.Plugin;
 
 public final class PlayerAuditListener implements Listener {
+    private final Plugin plugin;
     private final AuditService audit;
 
-    public PlayerAuditListener(AuditService audit) {
+    public PlayerAuditListener(Plugin plugin, AuditService audit) {
+        this.plugin = plugin;
         this.audit = audit;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBucketEmpty(PlayerBucketEmptyEvent event) {
         final var block = event.getBlock();
-        final var snapshot = BlockSnapshot.capture(block);
-        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), snapshot, snapshot);
+        final var before = BlockSnapshot.capture(block);
+        later(block, () -> audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), before, BlockSnapshot.capture(block)));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBucketFill(PlayerBucketFillEvent event) {
         final var block = event.getBlock();
-        final var snapshot = BlockSnapshot.capture(block);
-        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), snapshot, snapshot);
+        final var before = BlockSnapshot.capture(block);
+        later(block, () -> audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), before, BlockSnapshot.capture(block)));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -85,6 +89,10 @@ public final class PlayerAuditListener implements Listener {
         final var location = event.getHitBlock() != null ? event.getHitBlock() : projectile.getLocation().getBlock();
         audit.recordEntity(location, ActionType.PROJECTILE, projectile,
                 entitySnapshot(projectile), new BlockSnapshot("minecraft:air", null));
+    }
+
+    private void later(org.bukkit.block.Block block, Runnable task) {
+        Bukkit.getRegionScheduler().runDelayed(plugin, block.getWorld(), block.getChunk().getX(), block.getChunk().getZ(), ignored -> task.run(), 1L);
     }
 
     private static BlockSnapshot entitySnapshot(org.bukkit.entity.Entity entity) {
