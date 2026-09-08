@@ -43,6 +43,18 @@ public final class MessageService {
         };
     }
 
+    public static String rollbackStatus(String status) {
+        if (status == null) return "Unbekannt";
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "PENDING" -> "Wartet";
+            case "RUNNING" -> "Läuft";
+            case "COMPLETED" -> "Abgeschlossen";
+            case "FAILED" -> "Fehlgeschlagen";
+            case "CANCELLED", "CANCELED" -> "Abgebrochen";
+            default -> status;
+        };
+    }
+
     public static String time(long epochMillis) {
         return TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis));
     }
