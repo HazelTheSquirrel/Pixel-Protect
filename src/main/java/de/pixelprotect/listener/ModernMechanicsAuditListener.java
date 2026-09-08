@@ -23,6 +23,7 @@ import org.bukkit.event.block.CauldronLevelChangeEvent;
 import org.bukkit.event.block.FluidLevelChangeEvent;
 import org.bukkit.event.block.LeavesDecayEvent;
 import org.bukkit.event.block.MoistureChangeEvent;
+import org.bukkit.event.block.SculkBloomEvent;
 import org.bukkit.event.block.SpongeAbsorbEvent;
 import org.bukkit.event.block.TNTPrimeEvent;
 import org.bukkit.plugin.Plugin;
@@ -32,18 +33,14 @@ public final class ModernMechanicsAuditListener implements Listener {
     private final Plugin plugin;
     private final AuditService audit;
 
-    public ModernMechanicsAuditListener(Plugin plugin, AuditService audit) {
-        this.plugin = plugin;
-        this.audit = audit;
-    }
+    public ModernMechanicsAuditListener(Plugin plugin, AuditService audit) { this.plugin = plugin; this.audit = audit; }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockBreakBlock(BlockBreakBlockEvent event) {
         Block target = event.getBlock();
         Block source = event.getSource();
         BlockSnapshot before = BlockSnapshot.capture(target);
-        audit.latestPlacementActor(source).thenAccept(owner -> Bukkit.getRegionScheduler().run(plugin, target.getLocation(), task ->
-                audit.record(target, ActionType.BLOCK_BREAK, owner == null ? Actor.environment() : owner, before, air(), audit.newTransaction(), 0L)));
+        audit.latestPlacementActor(source).thenAccept(owner -> Bukkit.getRegionScheduler().run(plugin, target.getLocation(), task -> audit.record(target, ActionType.BLOCK_BREAK, owner == null ? Actor.environment() : owner, before, air(), audit.newTransaction(), 0L)));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -65,6 +62,13 @@ public final class ModernMechanicsAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onLeavesDecay(LeavesDecayEvent event) {
         audit.recordEnvironment(event.getBlock(), ActionType.DECAY, BlockSnapshot.capture(event.getBlock()), air());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSculkBloom(SculkBloomEvent event) {
+        Block block = event.getBlock();
+        BlockSnapshot snapshot = BlockSnapshot.capture(block);
+        audit.recordEnvironment(block, ActionType.SCULK, snapshot, snapshot);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -114,11 +118,6 @@ public final class ModernMechanicsAuditListener implements Listener {
         audit.record(event.getBlock(), ActionType.VAULT, actor, BlockSnapshot.capture(event.getBlock()), BlockSnapshot.capture(event.getBlock()));
     }
 
-    private static BlockSnapshot air() {
-        return new BlockSnapshot(org.bukkit.Material.AIR.createBlockData().getAsString(), null, null);
-    }
-
-    private static Actor actor(Entity entity) {
-        return entity instanceof Player player ? new Actor(player.getUniqueId(), player.getName()) : Actor.environment();
-    }
+    private static BlockSnapshot air() { return new BlockSnapshot(org.bukkit.Material.AIR.createBlockData().getAsString(), null, null); }
+    private static Actor actor(Entity entity) { return entity instanceof Player player ? new Actor(player.getUniqueId(), player.getName()) : Actor.environment(); }
 }
