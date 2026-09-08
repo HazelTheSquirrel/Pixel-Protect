@@ -1,5 +1,7 @@
 package de.pixelprotect;
 
+import de.pixelprotect.api.PixelProtectApi;
+import de.pixelprotect.api.PixelProtectApiImpl;
 import de.pixelprotect.command.PixelProtectCommand;
 import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.InspectListener;
@@ -11,13 +13,19 @@ import de.pixelprotect.service.RollbackService;
 import de.pixelprotect.storage.Database;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import org.bukkit.Bukkit;
+import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 public final class PixelProtect extends JavaPlugin {
     private Database database;
+    private PixelProtectApiImpl api;
 
     @Override
     public void onEnable() {
@@ -33,7 +41,12 @@ public final class PixelProtect extends JavaPlugin {
             return;
         }
 
-        final AuditService audit = new AuditService(database);
+        final Set<UUID> includedWorlds = resolveWorlds(getConfig().getStringList("worlds.include"));
+        final Set<UUID> excludedWorlds = resolveWorlds(getConfig().getStringList("worlds.exclude"));
+        final AuditService audit = new AuditService(database, includedWorlds, excludedWorlds);
+        api = new PixelProtectApiImpl(database, includedWorlds, databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
+        getServer().getServicesManager().register(PixelProtectApi.class, api, this, ServicePriority.Normal);
+
         final InspectService inspect = new InspectService(database);
         final RollbackService rollback = new RollbackService(this, audit, database);
         getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
@@ -57,14 +70,44 @@ public final class PixelProtect extends JavaPlugin {
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
+            final long interval = Math.max(1L, getConfig().getLong("retention.maintenance-interval-ticks", 24_000L));
             Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task ->
-                    database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L), 20L, 24_000L);
+                    database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L)
+                            .thenAccept(api::addRetentionPurged), 20L, interval);
+        }
+
+        if (getConfig().getBoolean("diagnostics.enabled", true)) {
+            final long interval = Math.max(1L, getConfig().getLong("diagnostics.log-interval-minutes", 5L) * 1200L);
+            Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task -> logDiagnostics(), interval, interval);
         }
         getLogger().info("PixelProtect enabled. Standalone audit core is ready.");
     }
 
+    private void logDiagnostics() {
+        if (api == null) return;
+        final var d = api.diagnostics();
+        getLogger().info("Diagnostics: queue=" + d.queueSize() + ", audits=" + d.auditCount() + ", overflow=" + d.overflowRecords() + ", schema=" + d.schemaVersion());
+    }
+
+    private Set<UUID> resolveWorlds(List<String> names) {
+        final Set<UUID> result = new HashSet<>();
+        for (String name : names) {
+            final var world = Bukkit.getWorld(name);
+            if (world == null) getLogger().warning("Configured world does not exist: " + name);
+            else result.add(world.getUID());
+        }
+        return Set.copyOf(result);
+    }
+
+    public PixelProtectApi api() { return api; }
+
     @Override
     public void onDisable() {
+        if (api != null) {
+            getServer().getServicesManager().unregisterAll(this);
+            api.shutdown();
+            api = null;
+        }
         if (database != null) {
             database.close();
             database = null;
