@@ -1,5 +1,6 @@
 package de.pixelprotect.service;
 
+import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.AuditEntry;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
@@ -19,10 +20,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class RollbackService {
-    private final Plugin plugin;
-    private final AuditService audit;
+    private static final java.util.Set<ActionType> ROLLBACKABLE = java.util.EnumSet.of(
+            ActionType.BREAK, ActionType.PLACE, ActionType.BURN, ActionType.EXPLOSION,
+            ActionType.PISTON, ActionType.FLUID, ActionType.GROW, ActionType.FORM,
+            ActionType.SPREAD, ActionType.ENTITY_CHANGE, ActionType.BUCKET
+    );
 
-    public RollbackService(Plugin plugin, AuditService audit) {
+    private final Plugin plugin;
+    private final de.pixelprotect.service.AuditService audit;
+
+    public RollbackService(Plugin plugin, de.pixelprotect.service.AuditService audit) {
         this.plugin = plugin;
         this.audit = audit;
     }
@@ -38,14 +45,21 @@ public final class RollbackService {
     private CompletableFuture<Result> evaluate(List<AuditEntry> entries, boolean mutate) {
         if (entries.isEmpty()) return CompletableFuture.completedFuture(new Result(0, 0));
         final Map<ChunkKey, List<AuditEntry>> byChunk = new HashMap<>();
+        int unsupported = 0;
         for (AuditEntry entry : entries) {
+            if (!ROLLBACKABLE.contains(entry.action())) {
+                unsupported++;
+                continue;
+            }
             byChunk.computeIfAbsent(new ChunkKey(entry.world(), entry.x() >> 4, entry.z() >> 4), ignored -> new ArrayList<>()).add(entry);
         }
 
+        final int initialSkipped = unsupported;
+        if (byChunk.isEmpty()) return CompletableFuture.completedFuture(new Result(0, initialSkipped));
         final CompletableFuture<Result> future = new CompletableFuture<>();
         final AtomicInteger remaining = new AtomicInteger(byChunk.size());
         final AtomicInteger applied = new AtomicInteger();
-        final AtomicInteger skipped = new AtomicInteger();
+        final AtomicInteger skipped = new AtomicInteger(initialSkipped);
         final RegionScheduler scheduler = Bukkit.getRegionScheduler();
 
         for (Map.Entry<ChunkKey, List<AuditEntry>> group : byChunk.entrySet()) {
@@ -61,7 +75,10 @@ public final class RollbackService {
                 for (AuditEntry entry : chunkEntries) {
                     try {
                         final Block block = world.getBlockAt(entry.x(), entry.y(), entry.z());
-                        if (!matchesRecordedState(block, entry)) { skipped.incrementAndGet(); continue; }
+                        if (!matchesRecordedState(block, entry)) {
+                            skipped.incrementAndGet();
+                            continue;
+                        }
                         if (mutate) {
                             final BlockData target = Bukkit.createBlockData(entry.beforeData());
                             audit.suppress(block);
