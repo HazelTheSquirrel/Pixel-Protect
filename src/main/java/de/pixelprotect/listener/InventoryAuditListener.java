@@ -7,6 +7,7 @@ import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InventoryDiffService;
 import org.bukkit.Bukkit;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
@@ -37,12 +38,7 @@ public final class InventoryAuditListener implements Listener {
     private final AutomationTracker automation;
     private final Map<Object, PendingEvent> pending = new IdentityHashMap<>();
 
-    public InventoryAuditListener(Plugin plugin, AuditService audit, AutomationTracker automation) {
-        this.plugin = plugin;
-        this.audit = audit;
-        this.automation = automation;
-    }
-
+    public InventoryAuditListener(Plugin plugin, AuditService audit, AutomationTracker automation) { this.plugin = plugin; this.audit = audit; this.automation = automation; }
     public AutomationTracker automation() { return automation; }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -67,17 +63,10 @@ public final class InventoryAuditListener implements Listener {
     public void onPickupAfter(InventoryPickupItemEvent event) { finish(event, Actor.environment()); }
 
     private void captureBefore(Object event, List<Inventory> inventories) { captureBefore(event, inventories, UUID.randomUUID(), null); }
-
     private void captureBefore(Object event, List<Inventory> inventories, UUID transactionId, AutomationTracker.TransferContext context) {
         List<Snapshot> snapshots = new ArrayList<>();
-        for (Inventory inventory : inventories) {
-            Snapshot snapshot = snapshot(inventory);
-            if (snapshot != null) snapshots.add(snapshot);
-        }
-        synchronized (pending) {
-            if (snapshots.isEmpty()) pending.remove(event);
-            else pending.put(event, new PendingEvent(transactionId, context, snapshots));
-        }
+        for (Inventory inventory : inventories) { Snapshot snapshot = snapshot(inventory); if (snapshot != null) snapshots.add(snapshot); }
+        synchronized (pending) { if (snapshots.isEmpty()) pending.remove(event); else pending.put(event, new PendingEvent(transactionId, context, snapshots)); }
     }
 
     private void finish(Object event, Actor defaultActor) {
@@ -98,19 +87,15 @@ public final class InventoryAuditListener implements Listener {
                     return;
                 }
             }
-            Actor actor = state.context == null ? defaultActor : state.context.attributedActor();
-            scheduleRecordChanges(changes, actor, state.transactionId);
-        } catch (RuntimeException ignored) {
-        }
+            scheduleRecordChanges(changes, state.context == null ? defaultActor : state.context.attributedActor(), state.transactionId);
+        } catch (RuntimeException ignored) { }
     }
 
     private void scheduleRecordChanges(List<ChangedSnapshot> changes, Actor actor, UUID transactionId) {
         for (ChangedSnapshot change : changes) {
-            UUID worldId = change.world();
+            World world = change.world();
             int x = change.x(), y = change.y(), z = change.z();
-            Bukkit.getRegionScheduler().run(plugin, worldId, x >> 4, z >> 4, task -> {
-                var world = Bukkit.getWorld(worldId);
-                if (world == null) return;
+            Bukkit.getRegionScheduler().run(plugin, world, x >> 4, z >> 4, task -> {
                 Block block = world.getBlockAt(x, y, z);
                 audit.record(block, ActionType.CONTAINER, actor, change.before().snapshot(), change.after().snapshot(), transactionId, change.sequence());
             });
@@ -124,17 +109,15 @@ public final class InventoryAuditListener implements Listener {
             Snapshot after = snapshot(before.block);
             if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) continue;
             Block block = before.block;
-            changes.add(new ChangedSnapshot(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ(), before, after, index));
+            changes.add(new ChangedSnapshot(block.getWorld(), block.getX(), block.getY(), block.getZ(), before, after, index));
         }
         return List.copyOf(changes);
     }
 
     private Block resolveMechanism(AutomationTracker.LocationData location) {
         if (location == null || location.world() == null) return null;
-        try {
-            var world = Bukkit.getWorld(location.world());
-            return world == null ? null : world.getBlockAt(location.x(), location.y(), location.z());
-        } catch (RuntimeException ignored) { return null; }
+        try { var world = Bukkit.getWorld(location.world()); return world == null ? null : world.getBlockAt(location.x(), location.y(), location.z()); }
+        catch (RuntimeException ignored) { return null; }
     }
 
     private Snapshot snapshot(Inventory inventory) {
@@ -167,10 +150,7 @@ public final class InventoryAuditListener implements Listener {
         return copy;
     }
     private static Actor actor(Player player) { return player == null ? Actor.environment() : new Actor(player.getUniqueId(), player.getName()); }
-
     private record PendingEvent(UUID transactionId, AutomationTracker.TransferContext context, List<Snapshot> before) {}
-    private record Snapshot(Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) {
-        private Snapshot { inventoryContents = cloneContents(inventoryContents); }
-    }
-    private record ChangedSnapshot(UUID world, int x, int y, int z, Snapshot before, Snapshot after, long sequence) {}
+    private record Snapshot(Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) { private Snapshot { inventoryContents = cloneContents(inventoryContents); } }
+    private record ChangedSnapshot(World world, int x, int y, int z, Snapshot before, Snapshot after, long sequence) {}
 }
