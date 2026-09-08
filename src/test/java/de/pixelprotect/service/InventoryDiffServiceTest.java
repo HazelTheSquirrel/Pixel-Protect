@@ -1,8 +1,10 @@
 package de.pixelprotect.service;
 
-import org.junit.jupiter.api.Test;
+import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
+import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,5 +46,36 @@ final class InventoryDiffServiceTest {
     void emptyItemStackArraysNeverEscapeDiffCalculation() {
         assertTrue(InventoryDiffService.itemChanges((ItemStack[]) null, (ItemStack[]) null).isEmpty());
         assertTrue(InventoryDiffService.itemChanges(new ItemStack[0], new ItemStack[0]).isEmpty());
+    }
+
+    @Test
+    void reportsBothInsertedAndRemovedItems() {
+        ItemStack[] before = {new ItemStack(Material.STONE, 10), new ItemStack(Material.OAK_LOG, 2)};
+        ItemStack[] after = {new ItemStack(Material.STONE, 4), new ItemStack(Material.OAK_PLANKS, 5)};
+
+        var changes = InventoryDiffService.itemChanges(before, after);
+
+        assertEquals(3, changes.size());
+        assertEquals(-6, changes.stream().filter(c -> c.item().getType() == Material.STONE)
+                .findFirst().orElseThrow().amount());
+        assertEquals(-2, changes.stream().filter(c -> c.item().getType() == Material.OAK_LOG)
+                .findFirst().orElseThrow().amount());
+        assertEquals(5, changes.stream().filter(c -> c.item().getType() == Material.OAK_PLANKS)
+                .findFirst().orElseThrow().amount());
+        assertTrue(changes.stream().anyMatch(InventoryDiffService.ItemChange::removed));
+        assertTrue(changes.stream().anyMatch(InventoryDiffService.ItemChange::added));
+    }
+
+    @Test
+    void keepsItemMetadataAsPartOfItemIdentity() {
+        ItemStack plain = new ItemStack(Material.STONE, 10);
+        ItemStack named = new ItemStack(Material.STONE, 10);
+        named.editMeta(meta -> meta.displayName(net.kyori.adventure.text.Component.text("Spezialstein")));
+
+        var changes = InventoryDiffService.itemChanges(new ItemStack[]{plain}, new ItemStack[]{named});
+
+        assertEquals(2, changes.size());
+        assertTrue(changes.stream().anyMatch(c -> c.amount() < 0));
+        assertTrue(changes.stream().anyMatch(c -> c.amount() > 0));
     }
 }
