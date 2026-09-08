@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 /** MySQL/MariaDB JDBC backend using the project's HikariCP pool. */
-public final class MySqlDatabase extends Database {
+public final class MySqlDatabase extends AsyncOverflowDatabase {
     private final String jdbcUrl;
     private final String username;
     private final String password;
@@ -105,5 +105,6 @@ public final class MySqlDatabase extends Database {
         try { flushQueue(); } catch (RuntimeException ignored) { }
         if (connection != null) try { connection.close(); } catch (SQLException ignored) { }
         if (dataSource != null) dataSource.close();
+        super.close();
     }
 }
