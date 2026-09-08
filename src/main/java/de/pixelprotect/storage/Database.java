@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 public final class Database implements AutoCloseable {
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 4;
     private final Path file;
     private final Logger logger;
     private final int batchSize;
@@ -97,6 +97,55 @@ public final class Database implements AutoCloseable {
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_audit_world_action_time ON audit(world, action, time DESC)");
             version = 2;
         }
+        if (version < 3) {
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS rollback_jobs (
+                        id TEXT PRIMARY KEY,
+                        status TEXT NOT NULL,
+                        total INTEGER NOT NULL,
+                        processed INTEGER NOT NULL DEFAULT 0,
+                        applied INTEGER NOT NULL DEFAULT 0,
+                        skipped INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        created_at INTEGER NOT NULL,
+                        finished_at INTEGER
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS rollback_job_entries (
+                        job_id TEXT NOT NULL,
+                        audit_id INTEGER NOT NULL,
+                        applied INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(job_id, audit_id),
+                        FOREIGN KEY(job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE,
+                        FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE
+                    )
+                    """);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_job_entries_applied ON rollback_job_entries(job_id, applied)");
+            version = 3;
+        }
+        if (version < 4) {
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS rollback_restores (
+                        id TEXT PRIMARY KEY,
+                        source_job_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        applied INTEGER NOT NULL DEFAULT 0,
+                        skipped INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        created_at INTEGER NOT NULL,
+                        finished_at INTEGER,
+                        FOREIGN KEY(source_job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE
+                    )
+                    """);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_rollback_restores_source ON rollback_restores(source_job_id, created_at DESC)");
+            statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED', error='Server restarted while rollback was running.', finished_at=? WHERE status='RUNNING'");
+            try (PreparedStatement p = connection.prepareStatement("INSERT OR REPLACE INTO pixelprotect_meta(key,value) VALUES('schema_version',?)")) {
+                p.setString(1, "4");
+                p.executeUpdate();
+            }
+            version = 4;
+        }
         try (PreparedStatement update = connection.prepareStatement("INSERT INTO pixelprotect_meta(key,value) VALUES('schema_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")) {
             update.setString(1, Integer.toString(version));
             update.executeUpdate();
@@ -113,17 +162,11 @@ public final class Database implements AutoCloseable {
     }
 
     public CompletableFuture<List<AuditEntry>> query(AuditQuery query) {
-        return executeAsync(() -> {
-            flushQueue();
-            return queryBlocking(query);
-        });
+        return executeAsync(() -> { flushQueue(); return queryBlocking(query); });
     }
 
     public CompletableFuture<Long> count(AuditQuery query) {
-        return executeAsync(() -> {
-            flushQueue();
-            return countBlocking(query);
-        });
+        return executeAsync(() -> { flushQueue(); return countBlocking(query); });
     }
 
     public CompletableFuture<List<AuditEntry>> query(UUID world, int centerX, int centerY, int centerZ,
@@ -151,9 +194,7 @@ public final class Database implements AutoCloseable {
         final QuerySql built = buildQuery(query, true);
         try (PreparedStatement statement = connection.prepareStatement(built.sql())) {
             bind(statement, built.params());
-            try (ResultSet result = statement.executeQuery()) {
-                return result.next() ? result.getLong(1) : 0L;
-            }
+            try (ResultSet result = statement.executeQuery()) { return result.next() ? result.getLong(1) : 0L; }
         }
     }
 
@@ -223,21 +264,101 @@ public final class Database implements AutoCloseable {
         });
     }
 
+    public CompletableFuture<Void> createRollbackJob(UUID id, List<AuditEntry> entries) {
+        final List<AuditEntry> snapshot = List.copyOf(entries);
+        return executeAsync(() -> {
+            flushQueue();
+            connection.setAutoCommit(false);
+            try (PreparedStatement job = connection.prepareStatement("INSERT INTO rollback_jobs(id,status,total,created_at) VALUES(?,?,?,?)");
+                 PreparedStatement entry = connection.prepareStatement("INSERT INTO rollback_job_entries(job_id,audit_id) VALUES(?,?)")) {
+                job.setString(1, id.toString()); job.setString(2, "RUNNING"); job.setInt(3, snapshot.size()); job.setLong(4, System.currentTimeMillis()); job.executeUpdate();
+                for (AuditEntry audit : snapshot) { entry.setString(1, id.toString()); entry.setLong(2, audit.id()); entry.addBatch(); }
+                entry.executeBatch();
+                connection.commit();
+            } catch (SQLException exception) { connection.rollback(); throw exception; }
+            finally { connection.setAutoCommit(true); }
+            return null;
+        });
+    }
+
+    public CompletableFuture<Void> updateRollbackJob(UUID id, String status, int processed, int applied, int skipped, String error) {
+        return executeAsync(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_jobs SET status=?,processed=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")) {
+                statement.setString(1, status); statement.setInt(2, processed); statement.setInt(3, applied); statement.setInt(4, skipped);
+                if (error == null) statement.setNull(5, Types.VARCHAR); else statement.setString(5, error);
+                if ("RUNNING".equals(status)) statement.setNull(6, Types.BIGINT); else statement.setLong(6, System.currentTimeMillis());
+                statement.setString(7, id.toString()); statement.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    public CompletableFuture<Void> markRollbackApplied(UUID id, List<Long> auditIds) {
+        final List<Long> ids = List.copyOf(auditIds);
+        return executeAsync(() -> {
+            if (ids.isEmpty()) return null;
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_job_entries SET applied=1 WHERE job_id=? AND audit_id=?")) {
+                for (long auditId : ids) { statement.setString(1, id.toString()); statement.setLong(2, auditId); statement.addBatch(); }
+                statement.executeBatch();
+            }
+            return null;
+        });
+    }
+
+    public CompletableFuture<RollbackJobRecord> rollbackJob(UUID id) {
+        return executeAsync(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT id,status,total,processed,applied,skipped,error,created_at,finished_at FROM rollback_jobs WHERE id=?")) {
+                statement.setString(1, id.toString());
+                try (ResultSet result = statement.executeQuery()) {
+                    if (!result.next()) return null;
+                    return new RollbackJobRecord(UUID.fromString(result.getString("id")), result.getString("status"), result.getInt("total"), result.getInt("processed"), result.getInt("applied"), result.getInt("skipped"), result.getString("error"), result.getLong("created_at"), result.getLong("finished_at"));
+                }
+            }
+        });
+    }
+
+    public CompletableFuture<List<AuditEntry>> appliedRollbackEntries(UUID id) {
+        return executeAsync(() -> {
+            flushQueue();
+            final List<AuditEntry> entries = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement("SELECT a.id,a.time,a.world,a.x,a.y,a.z,a.actor_uuid,a.actor_name,a.action,a.before_data,a.after_data,a.before_inventory,a.after_inventory FROM rollback_job_entries j JOIN audit a ON a.id=j.audit_id WHERE j.job_id=? AND j.applied=1 ORDER BY a.id ASC")) {
+                statement.setString(1, id.toString());
+                try (ResultSet result = statement.executeQuery()) { while (result.next()) entries.add(read(result)); }
+            }
+            return entries;
+        });
+    }
+
+    public CompletableFuture<UUID> createRestore(UUID sourceJob) {
+        final UUID restoreId = UUID.randomUUID();
+        return executeAsync(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO rollback_restores(id,source_job_id,status,created_at) VALUES(?,?,?,?,?)".replace("?,?,?,?,?", "?,?,?,?"))) {
+                statement.setString(1, restoreId.toString()); statement.setString(2, sourceJob.toString()); statement.setString(3, "RUNNING"); statement.setLong(4, System.currentTimeMillis()); statement.executeUpdate();
+            }
+            return restoreId;
+        });
+    }
+
+    public CompletableFuture<Void> updateRestore(UUID restoreId, String status, int applied, int skipped, String error) {
+        return executeAsync(() -> {
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE rollback_restores SET status=?,applied=?,skipped=?,error=?,finished_at=? WHERE id=?")) {
+                statement.setString(1, status); statement.setInt(2, applied); statement.setInt(3, skipped);
+                if (error == null) statement.setNull(4, Types.VARCHAR); else statement.setString(4, error);
+                statement.setLong(5, System.currentTimeMillis()); statement.setString(6, restoreId.toString()); statement.executeUpdate();
+            }
+            return null;
+        });
+    }
+
     private <T> CompletableFuture<T> executeAsync(SqlSupplier<T> supplier) {
         final CompletableFuture<T> future = new CompletableFuture<>();
-        executor.execute(() -> {
-            try { future.complete(supplier.get()); }
-            catch (Throwable throwable) { future.completeExceptionally(throwable); }
-        });
+        executor.execute(() -> { try { future.complete(supplier.get()); } catch (Throwable throwable) { future.completeExceptionally(throwable); } });
         return future;
     }
 
     private AuditEntry read(ResultSet result) throws SQLException {
         final String actorUuid = result.getString("actor_uuid");
-        return new AuditEntry(result.getLong("id"), result.getLong("time"), UUID.fromString(result.getString("world")),
-                result.getInt("x"), result.getInt("y"), result.getInt("z"), actorUuid == null ? null : UUID.fromString(actorUuid),
-                result.getString("actor_name"), ActionType.valueOf(result.getString("action")), result.getString("before_data"),
-                result.getString("after_data"), result.getBytes("before_inventory"), result.getBytes("after_inventory"));
+        return new AuditEntry(result.getLong("id"), result.getLong("time"), UUID.fromString(result.getString("world")), result.getInt("x"), result.getInt("y"), result.getInt("z"), actorUuid == null ? null : UUID.fromString(actorUuid), result.getString("actor_name"), ActionType.valueOf(result.getString("action")), result.getString("before_data"), result.getString("after_data"), result.getBytes("before_inventory"), result.getBytes("after_inventory"));
     }
 
     private void flushQueue() {
@@ -254,16 +375,12 @@ public final class Database implements AutoCloseable {
     private void insertBatch(List<AuditEntry> entries) throws SQLException {
         if (entries.isEmpty()) return;
         connection.setAutoCommit(false);
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO audit(time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""")) {
+        try (PreparedStatement statement = connection.prepareStatement("INSERT INTO audit(time,world,x,y,z,actor_uuid,actor_name,action,before_data,after_data,before_inventory,after_inventory) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")) {
             for (AuditEntry entry : entries) {
                 int i = 1;
-                statement.setLong(i++, entry.time()); statement.setString(i++, entry.world().toString());
-                statement.setInt(i++, entry.x()); statement.setInt(i++, entry.y()); statement.setInt(i++, entry.z());
+                statement.setLong(i++, entry.time()); statement.setString(i++, entry.world().toString()); statement.setInt(i++, entry.x()); statement.setInt(i++, entry.y()); statement.setInt(i++, entry.z());
                 if (entry.actor() == null) statement.setNull(i++, Types.VARCHAR); else statement.setString(i++, entry.actor().toString());
-                statement.setString(i++, entry.actorName()); statement.setString(i++, entry.action().name());
-                statement.setString(i++, entry.beforeData()); statement.setString(i++, entry.afterData());
+                statement.setString(i++, entry.actorName()); statement.setString(i++, entry.action().name()); statement.setString(i++, entry.beforeData()); statement.setString(i++, entry.afterData());
                 statement.setBytes(i++, entry.beforeInventory()); statement.setBytes(i, entry.afterInventory()); statement.addBatch();
             }
             statement.executeBatch(); connection.commit();
@@ -281,6 +398,7 @@ public final class Database implements AutoCloseable {
         catch (SQLException exception) { logger.warning("Failed to close SQLite connection: " + exception.getMessage()); }
     }
 
+    public record RollbackJobRecord(UUID id, String status, int total, int processed, int applied, int skipped, String error, long createdAt, long finishedAt) {}
     private record QuerySql(String sql, List<Object> params) {}
     @FunctionalInterface private interface SqlSupplier<T> { T get() throws Exception; }
 }
