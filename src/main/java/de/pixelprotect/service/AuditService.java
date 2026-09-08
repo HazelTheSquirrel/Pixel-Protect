@@ -16,7 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Transaction-aware audit facade with configurable world boundaries and explicit entity attribution. */
+/** Synchronous event-thread capture facade. It creates immutable records and never performs database I/O. */
 public final class AuditService {
     private final Database database;
     private final Clock clock;
@@ -25,10 +25,13 @@ public final class AuditService {
     private final ConcurrentHashMap<BlockKey, Long> suppressed = new ConcurrentHashMap<>();
 
     public AuditService(Database database) { this(database, Clock.systemUTC(), Set.of(), Set.of()); }
+
     public AuditService(Database database, Set<UUID> includedWorlds, Set<UUID> excludedWorlds) {
         this(database, Clock.systemUTC(), includedWorlds, excludedWorlds);
     }
+
     AuditService(Database database, Clock clock) { this(database, clock, Set.of(), Set.of()); }
+
     AuditService(Database database, Clock clock, Set<UUID> includedWorlds, Set<UUID> excludedWorlds) {
         this.database = database;
         this.clock = clock;
@@ -39,7 +42,7 @@ public final class AuditService {
     public UUID newTransaction() { return UUID.randomUUID(); }
 
     public boolean isWorldIncluded(UUID world) {
-        return !excludedWorlds.contains(world) && (includedWorlds.isEmpty() || includedWorlds.contains(world));
+        return world != null && !excludedWorlds.contains(world) && (includedWorlds.isEmpty() || includedWorlds.contains(world));
     }
 
     public CompletableFuture<Actor> latestPlacementActor(Block block) {
@@ -55,45 +58,63 @@ public final class AuditService {
     }
 
     public boolean record(Block block, ActionType action, Actor actor, BlockSnapshot before, BlockSnapshot after) {
-        return record(block, action, actor, before, after, newTransaction(), 0L);
+        return record(block, action, actor, before, after, null, newTransaction(), 0L);
     }
 
     public boolean record(Block block, ActionType action, Actor actor, BlockSnapshot before, BlockSnapshot after,
                           UUID transactionId, long sequence) {
-        if (block == null || actor == null || !isWorldIncluded(block.getWorld().getUID()) || isSuppressed(block)) return false;
+        return record(block, action, actor, before, after, null, transactionId, sequence);
+    }
+
+    public boolean record(Block block, ActionType action, Actor actor, BlockSnapshot before, BlockSnapshot after,
+                          String details, UUID transactionId, long sequence) {
+        if (block == null || action == null || actor == null || !isWorldIncluded(block.getWorld().getUID()) || isSuppressed(block)) return false;
+        cleanupSuppression(clock.millis());
         return database.record(new AuditEntry(0L, clock.millis(), block.getWorld().getUID(), block.getX(), block.getY(), block.getZ(),
                 actor.uuid(), actor.name(), action, before.blockData(), after.blockData(), before.inventory(), after.inventory(),
-                before.blockEntity(), after.blockEntity(), transactionId, sequence));
+                before.blockEntity(), after.blockEntity(), details, transactionId, sequence));
     }
 
     public boolean recordPlayer(Block block, ActionType action, Player player, BlockSnapshot before, BlockSnapshot after) {
-        return recordPlayer(block, action, player, before, after, newTransaction(), 0L);
+        return recordPlayer(block, action, player, before, after, null, newTransaction(), 0L);
     }
 
     public boolean recordPlayer(Block block, ActionType action, Player player, BlockSnapshot before, BlockSnapshot after,
                                 UUID transactionId, long sequence) {
+        return recordPlayer(block, action, player, before, after, null, transactionId, sequence);
+    }
+
+    public boolean recordPlayer(Block block, ActionType action, Player player, BlockSnapshot before, BlockSnapshot after,
+                                String details, UUID transactionId, long sequence) {
         if (player == null) return false;
-        return record(block, action, new Actor(player.getUniqueId(), player.getName()), before, after, transactionId, sequence);
+        return record(block, action, new Actor(player.getUniqueId(), player.getName()), before, after, details, transactionId, sequence);
     }
 
     public boolean recordEntity(Block block, ActionType action, Entity entity, BlockSnapshot before, BlockSnapshot after) {
-        return recordEntity(block, action, entity, before, after, newTransaction(), 0L);
+        return recordEntity(block, action, entity, before, after, null, newTransaction(), 0L);
     }
 
     public boolean recordEntity(Block block, ActionType action, Entity entity, BlockSnapshot before, BlockSnapshot after,
                                 UUID transactionId, long sequence) {
+        return recordEntity(block, action, entity, before, after, null, transactionId, sequence);
+    }
+
+    public boolean recordEntity(Block block, ActionType action, Entity entity, BlockSnapshot before, BlockSnapshot after,
+                                String details, UUID transactionId, long sequence) {
         Actor actor = entity == null ? Actor.environment() : new Actor(entity.getUniqueId(), entity.getType().getKey().toString());
-        return record(block, action, actor, before, after, transactionId, sequence);
+        return record(block, action, actor, before, after, details, transactionId, sequence);
     }
 
     public boolean recordEnvironment(Block block, ActionType action, BlockSnapshot before, BlockSnapshot after) {
-        return record(block, action, Actor.environment(), before, after, newTransaction(), 0L);
+        return recordEnvironment(block, action, before, after, null, newTransaction(), 0L);
     }
 
-    /**
-     * Rollback suppression is deliberately short-lived and location-scoped. It exists
-     * only to prevent the plugin's own mutations from recursively entering the audit.
-     */
+    public boolean recordEnvironment(Block block, ActionType action, BlockSnapshot before, BlockSnapshot after,
+                                     String details, UUID transactionId, long sequence) {
+        return record(block, action, Actor.environment(), before, after, details, transactionId, sequence);
+    }
+
+    /** Suppresses the plugin's own rollback mutation for a short, location-scoped interval. */
     public void suppress(Block block) {
         if (block != null) suppressed.put(new BlockKey(block), clock.millis() + 2_000L);
     }
@@ -105,6 +126,11 @@ public final class AuditService {
         if (expires >= clock.millis()) return true;
         suppressed.remove(key, expires);
         return false;
+    }
+
+    private void cleanupSuppression(long now) {
+        if (suppressed.size() < 256) return;
+        suppressed.entrySet().removeIf(entry -> entry.getValue() < now);
     }
 
     private record BlockKey(UUID world, int x, int y, int z) {
