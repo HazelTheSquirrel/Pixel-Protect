@@ -4,7 +4,6 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.concurrent.TimeUnit;
@@ -58,10 +57,10 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
         running = true;
         replayOverflow();
         executor.scheduleAtFixedRate(this::flushQueue, flushIntervalMillis, flushIntervalMillis, TimeUnit.MILLISECONDS);
-        super.openOverflowWriter();
+        startOverflowWriter();
     }
 
-    private static void migrateMySql(Connection connection) throws SQLException {
+    private static void migrateMySql(java.sql.Connection connection) throws SQLException {
         try (Statement s = connection.createStatement()) {
             s.executeUpdate("CREATE TABLE IF NOT EXISTS pixelprotect_meta (meta_key VARCHAR(128) PRIMARY KEY, meta_value TEXT NOT NULL) ENGINE=InnoDB");
             int version = 0;
