@@ -51,8 +51,11 @@ public record BlockSnapshot(String blockData, byte[] inventory, String blockEnti
         for (Component line : side.lines()) lines.add(COMPONENTS.serialize(line));
         o.add("lines", lines); o.addProperty("glowing", side.isGlowingText()); o.addProperty("color", side.getColor().name()); return o;
     }
+    /** Strict post-state guard: a recorded null means the current block must also have no supported block-entity state. */
     public static boolean matchesBlockEntity(BlockState state, String expected) {
-        if (expected == null) return true; String actual = serializeBlockEntity(state); if (actual == null) return false;
+        String actual = serializeBlockEntity(state);
+        if (expected == null) return actual == null;
+        if (actual == null) return false;
         try { return JsonParser.parseString(actual).equals(JsonParser.parseString(expected)); } catch (RuntimeException ignored) { return actual.equals(expected); }
     }
     public static void applyBlockEntity(BlockState state, String data) {
