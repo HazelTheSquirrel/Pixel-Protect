@@ -22,7 +22,11 @@ public final class MessageService {
             case ENTITY_SPAWN -> "Entität gespawnt"; case ENTITY_DEATH -> "Entität gestorben"; case ENTITY_REMOVE -> "Entität entfernt";
             case ENTITY_DAMAGE -> "Entität beschädigt"; case PROJECTILE -> "Projektil"; case INTERACT -> "Interaktion";
             case ENTITY_INTERACT -> "Entitätsinteraktion"; case SIGN -> "Schild geändert"; case CHAT -> "Chat"; case COMMAND -> "Befehl";
-            case SESSION -> "Sitzung"; case CRAFT -> "Herstellung"; case TRADE -> "Handel";
+            case SESSION -> "Sitzung"; case CRAFT -> "Herstellung"; case TRADE -> "Handel"; case DECAY -> "Verfall";
+            case MOISTURE -> "Feuchtigkeit"; case SCULK -> "Sculk"; case CAULDRON -> "Kessel"; case DISPENSE -> "Ausgabe";
+            case COMPOST -> "Kompostierung"; case SHEAR -> "Scherenaktion"; case TNT_PRIME -> "TNT gezündet"; case BLOCK_BREAK -> "Block durch Mechanik abgebaut";
+            case VAULT -> "Vault-Zustand"; case PORTAL -> "Portal"; case STRUCTURE -> "Struktur"; case BOOKSHELF -> "Bücherregal";
+            case FLOWER_POT -> "Blumentopf"; case CAMPFIRE -> "Lagerfeuer"; case LECTERN -> "Lesepult";
         };
     }
     public static String rollbackStatus(Status status) {
