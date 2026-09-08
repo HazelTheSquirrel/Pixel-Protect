@@ -31,7 +31,8 @@ import java.util.UUID;
 /**
  * Forensic container audit listener. Player events snapshot before mutation at LOWEST and compare
  * against MONITOR state. Automated transfers share one transaction id and are correlated with a
- * tracked hopper/dropper/dispenser/crafter when the endpoint proves the mechanism involved.
+ * tracked automation mechanism. Existing mechanisms are attributed asynchronously from their
+ * latest recorded placement when no in-memory owner is available.
  */
 public final class InventoryAuditListener implements Listener {
     private final AuditService audit;
@@ -118,18 +119,54 @@ public final class InventoryAuditListener implements Listener {
         if (state == null) return;
 
         try {
-            Actor actor = state.context == null ? defaultActor : state.context.attributedActor();
-            for (int index = 0; index < state.before.size(); index++) {
-                Snapshot before = state.before.get(index);
-                Snapshot after = snapshot(before.block);
-                if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) {
-                    continue;
+            List<ChangedSnapshot> changes = changedSnapshots(state);
+            if (changes.isEmpty()) return;
+
+            if (state.context != null && state.context.owner() == null && state.context.mechanism() != null) {
+                Block mechanism = resolveMechanism(state.context.mechanism());
+                if (mechanism != null) {
+                    audit.latestPlacementActor(mechanism).whenComplete((owner, failure) -> {
+                        if (failure == null && owner != null) automation.cacheOwner(state.transactionId, owner);
+                        recordChanges(changes, owner == null ? defaultActor : owner, state.transactionId);
+                    });
+                    return;
                 }
-                audit.record(before.block, ActionType.CONTAINER, actor,
-                        before.snapshot, after.snapshot, state.transactionId, index);
             }
+
+            Actor actor = state.context == null ? defaultActor : state.context.attributedActor();
+            recordChanges(changes, actor, state.transactionId);
         } catch (RuntimeException ignored) {
             // Audit failures must never break a server event pipeline.
+        }
+    }
+
+    private void recordChanges(List<ChangedSnapshot> changes, Actor actor, UUID transactionId) {
+        for (ChangedSnapshot change : changes) {
+            audit.record(change.block(), ActionType.CONTAINER, actor,
+                    change.before().snapshot(), change.after().snapshot(), transactionId, change.sequence());
+        }
+    }
+
+    private List<ChangedSnapshot> changedSnapshots(PendingEvent state) {
+        List<ChangedSnapshot> changes = new ArrayList<>();
+        for (int index = 0; index < state.before.size(); index++) {
+            Snapshot before = state.before.get(index);
+            Snapshot after = snapshot(before.block);
+            if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) {
+                continue;
+            }
+            changes.add(new ChangedSnapshot(before.block, before, after, index));
+        }
+        return List.copyOf(changes);
+    }
+
+    private Block resolveMechanism(AutomationTracker.LocationData location) {
+        if (location == null || location.world() == null) return null;
+        try {
+            var world = org.bukkit.Bukkit.getWorld(location.world());
+            return world == null ? null : world.getBlockAt(location.x(), location.y(), location.z());
+        } catch (RuntimeException ignored) {
+            return null;
         }
     }
 
@@ -178,4 +215,6 @@ public final class InventoryAuditListener implements Listener {
             inventoryContents = cloneContents(inventoryContents);
         }
     }
+
+    private record ChangedSnapshot(org.bukkit.block.Block block, Snapshot before, Snapshot after, long sequence) {}
 }
