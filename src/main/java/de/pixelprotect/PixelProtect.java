@@ -87,7 +87,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getInt("rollback.max-records", 100_000));
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
                 commands -> commands.registrar().register(command.create().build(),
-                        "Audit and rollback world changes", "pp"));
+                        "Audit and rollback world changes", List.of("pp")));
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
