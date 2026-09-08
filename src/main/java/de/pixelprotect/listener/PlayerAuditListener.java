@@ -4,7 +4,6 @@ import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.model.EntitySnapshot;
 import de.pixelprotect.service.AuditService;
-import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -22,13 +21,14 @@ import org.bukkit.event.player.PlayerBucketEmptyEvent;
 import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.plugin.Plugin;
 
-import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
+/** Player-caused block, bucket and entity lifecycle auditing. */
 public final class PlayerAuditListener implements Listener {
     private final Plugin plugin;
     private final AuditService audit;
-    private final Map<Object, BlockSnapshot> bucketBefore = new IdentityHashMap<>();
+    private final Map<Object, BlockSnapshot> bucketBefore = new ConcurrentHashMap<>();
 
     public PlayerAuditListener(Plugin plugin, AuditService audit) {
         this.plugin = plugin;
@@ -36,36 +36,25 @@ public final class PlayerAuditListener implements Listener {
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
-    public void onBucketEmptyBefore(PlayerBucketEmptyEvent event) {
-        bucketBefore.put(event, BlockSnapshot.capture(event.getBlock()));
-    }
-
+    public void onBucketEmptyBefore(PlayerBucketEmptyEvent event) { bucketBefore.put(event, BlockSnapshot.capture(event.getBlock())); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
-    public void onBucketEmptyAfter(PlayerBucketEmptyEvent event) {
-        recordBucket(event);
-    }
-
+    public void onBucketEmptyAfter(PlayerBucketEmptyEvent event) { recordBucket(event); }
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
-    public void onBucketFillBefore(PlayerBucketFillEvent event) {
-        bucketBefore.put(event, BlockSnapshot.capture(event.getBlock()));
-    }
-
+    public void onBucketFillBefore(PlayerBucketFillEvent event) { bucketBefore.put(event, BlockSnapshot.capture(event.getBlock())); }
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
-    public void onBucketFillAfter(PlayerBucketFillEvent event) {
-        recordBucket(event);
-    }
+    public void onBucketFillAfter(PlayerBucketFillEvent event) { recordBucket(event); }
 
     private void recordBucket(org.bukkit.event.player.PlayerBucketEvent event) {
         Block block = event.getBlock();
         BlockSnapshot before = bucketBefore.remove(event);
-        if (before == null || before.blockData().equals(BlockSnapshot.capture(block).blockData())) return;
-        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), before, BlockSnapshot.capture(block));
+        if (before == null) return;
+        BlockSnapshot after = BlockSnapshot.capture(block);
+        if (before.blockData().equals(after.blockData())) return;
+        audit.recordPlayer(block, ActionType.BUCKET, event.getPlayer(), before, after);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onCreatureSpawn(CreatureSpawnEvent event) {
-        recordSpawn(event.getEntity(), ActionType.ENTITY_SPAWN, event.getSpawnReason().name());
-    }
+    public void onCreatureSpawn(CreatureSpawnEvent event) { recordSpawn(event.getEntity(), ActionType.ENTITY_SPAWN, event.getSpawnReason().name()); }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onItemDrop(EntityDropItemEvent event) {
@@ -92,34 +81,26 @@ public final class PlayerAuditListener implements Listener {
     public void onItemDespawn(ItemDespawnEvent event) {
         var item = event.getEntity();
         audit.recordEnvironment(item.getLocation().getBlock(), ActionType.ITEM_DESPAWN,
-                new BlockSnapshot(EntitySnapshot.capture(item, "DESPAWN", null).serialize(), null),
-                new BlockSnapshot("minecraft:air", null));
+                new BlockSnapshot(EntitySnapshot.capture(item, "DESPAWN", null).serialize(), null), new BlockSnapshot("minecraft:air", null));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityDeath(EntityDeathEvent event) {
         var entity = event.getEntity();
-        String cause = entity.getLastDamageCause() == null ? "UNKNOWN" : event.getEntity().getLastDamageCause().getCause().name();
+        String cause = entity.getLastDamageCause() == null ? "UNKNOWN" : entity.getLastDamageCause().getCause().name();
         Entity damager = null;
         if (entity.getLastDamageCause() instanceof org.bukkit.event.entity.EntityDamageByEntityEvent damage) damager = damage.getDamager();
-        if (damager instanceof Player player) {
-            audit.recordPlayer(entity.getLocation().getBlock(), ActionType.ENTITY_DEATH, player,
-                    new BlockSnapshot(EntitySnapshot.capture(entity, "DEATH:" + cause, player.getUniqueId().toString()).serialize(), null),
-                    new BlockSnapshot("minecraft:air", null));
-        } else {
-            audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_DEATH,
-                    new BlockSnapshot(EntitySnapshot.capture(entity, "DEATH:" + cause, damager == null ? null : damager.getUniqueId().toString()).serialize(), null),
-                    new BlockSnapshot("minecraft:air", null));
-        }
+        var before = new BlockSnapshot(EntitySnapshot.capture(entity, "DEATH:" + cause, damager == null ? null : damager.getUniqueId().toString()).serialize(), null);
+        var after = new BlockSnapshot("minecraft:air", null);
+        if (damager instanceof Player player) audit.recordPlayer(entity.getLocation().getBlock(), ActionType.ENTITY_DEATH, player, before, after);
+        else audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_DEATH, before, after);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityRemove(EntityRemoveEvent event) {
         var entity = event.getEntity();
-        String cause = event.getCause().name();
         audit.recordEnvironment(entity.getLocation().getBlock(), ActionType.ENTITY_REMOVE,
-                new BlockSnapshot(EntitySnapshot.capture(entity, "REMOVE:" + cause, null).serialize(), null),
-                new BlockSnapshot("minecraft:air", null));
+                new BlockSnapshot(EntitySnapshot.capture(entity, "REMOVE:" + event.getCause().name(), null).serialize(), null), new BlockSnapshot("minecraft:air", null));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -136,8 +117,6 @@ public final class PlayerAuditListener implements Listener {
 
     private void recordSpawn(Entity entity, ActionType action, String cause) {
         var block = entity.getLocation().getBlock();
-        audit.recordEnvironment(block, action,
-                new BlockSnapshot("minecraft:air", null),
-                new BlockSnapshot(EntitySnapshot.capture(entity, cause, null).serialize(), null));
+        audit.recordEnvironment(block, action, new BlockSnapshot("minecraft:air", null), new BlockSnapshot(EntitySnapshot.capture(entity, cause, null).serialize(), null));
     }
 }
