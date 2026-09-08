@@ -42,21 +42,28 @@ public final class AutomationTracker {
         Block destinationBlock = blockOf(destination);
         Block mechanismBlock = null;
         Mechanism mechanism = null;
-        if (sourceBlock != null) {
-            mechanism = mechanisms.get(new BlockKey(sourceBlock));
-            if (mechanism != null) mechanismBlock = sourceBlock;
-        }
-        if (mechanism == null && destinationBlock != null) {
-            mechanism = mechanisms.get(new BlockKey(destinationBlock));
-            if (mechanism != null) mechanismBlock = destinationBlock;
-        }
-        if (mechanism == null) return null;
 
+        if (sourceBlock != null && isMechanism(sourceBlock.getType())) {
+            mechanismBlock = sourceBlock;
+            mechanism = mechanisms.get(new BlockKey(sourceBlock));
+        }
+        if (mechanismBlock == null && destinationBlock != null && isMechanism(destinationBlock.getType())) {
+            mechanismBlock = destinationBlock;
+            mechanism = mechanisms.get(new BlockKey(destinationBlock));
+        }
+        if (mechanismBlock == null) return null;
+
+        Actor owner = mechanism == null ? null : mechanism.owner();
         TransferContext context = new TransferContext(transactionId, location(sourceBlock), location(destinationBlock),
-                location(mechanismBlock), mechanism.type(), mechanism.owner(), "Hopper-Automatik", System.currentTimeMillis());
+                location(mechanismBlock), mechanismBlock.getType(), owner, "Hopper-Automatik", System.currentTimeMillis());
         if (transfers.size() >= MAX_TRANSFER_CONTEXTS) cleanupOldest();
         transfers.put(transactionId, context);
         return context;
+    }
+
+    public void cacheOwner(UUID transactionId, Actor owner) {
+        if (transactionId == null || owner == null || owner.uuid() == null) return;
+        transfers.computeIfPresent(transactionId, (id, old) -> old.withOwner(owner));
     }
 
     public TransferContext context(UUID transactionId) {
@@ -117,6 +124,10 @@ public final class AutomationTracker {
                                   LocationData mechanism, Material mechanismType, Actor owner, String cause, long time) {
         public Actor attributedActor() {
             return owner == null ? Actor.environment() : owner;
+        }
+
+        public TransferContext withOwner(Actor actor) {
+            return new TransferContext(transactionId, source, destination, mechanism, mechanismType, actor, cause, time);
         }
     }
 
