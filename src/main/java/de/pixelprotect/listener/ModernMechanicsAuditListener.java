@@ -10,6 +10,7 @@ import io.papermc.paper.event.block.BlockPreDispenseEvent;
 import io.papermc.paper.event.block.CompostItemEvent;
 import io.papermc.paper.event.block.DragonEggFormEvent;
 import io.papermc.paper.event.block.VaultChangeStateEvent;
+import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
@@ -24,12 +25,15 @@ import org.bukkit.event.block.LeavesDecayEvent;
 import org.bukkit.event.block.MoistureChangeEvent;
 import org.bukkit.event.block.SpongeAbsorbEvent;
 import org.bukkit.event.block.TNTPrimeEvent;
+import org.bukkit.plugin.Plugin;
 
-/** Complete coverage for modern Paper block-mechanics events that are not represented by the classic place/break listeners. */
+/** Modern Paper mechanics coverage. Async attribution is always returned to the owning region before Bukkit state is touched. */
 public final class ModernMechanicsAuditListener implements Listener {
+    private final Plugin plugin;
     private final AuditService audit;
 
-    public ModernMechanicsAuditListener(AuditService audit) {
+    public ModernMechanicsAuditListener(Plugin plugin, AuditService audit) {
+        this.plugin = plugin;
         this.audit = audit;
     }
 
@@ -38,29 +42,24 @@ public final class ModernMechanicsAuditListener implements Listener {
         Block target = event.getBlock();
         Block source = event.getSource();
         BlockSnapshot before = BlockSnapshot.capture(target);
-        audit.latestPlacementActor(source).thenAccept(owner -> audit.record(target, ActionType.BLOCK_BREAK,
-                owner == null ? Actor.environment() : owner,
-                before, air(), audit.newTransaction(), 0L));
+        audit.latestPlacementActor(source).thenAccept(owner -> Bukkit.getRegionScheduler().run(plugin, target.getLocation(), task ->
+                audit.record(target, ActionType.BLOCK_BREAK, owner == null ? Actor.environment() : owner, before, air(), audit.newTransaction(), 0L)));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onSpongeAbsorb(SpongeAbsorbEvent event) {
-        for (BlockState state : event.getBlocks()) {
-            audit.recordEnvironment(state.getBlock(), ActionType.FLUID, BlockSnapshot.fromState(state), air());
-        }
+        for (BlockState state : event.getBlocks()) audit.recordEnvironment(state.getBlock(), ActionType.FLUID, BlockSnapshot.fromState(state), air());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onFluidLevelChange(FluidLevelChangeEvent event) {
         Block block = event.getBlock();
-        audit.recordEnvironment(block, ActionType.FLUID, BlockSnapshot.capture(block),
-                new BlockSnapshot(event.getNewData().getAsString(), null, null));
+        audit.recordEnvironment(block, ActionType.FLUID, BlockSnapshot.capture(block), new BlockSnapshot(event.getNewData().getAsString(), null, null));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onMoistureChange(MoistureChangeEvent event) {
-        audit.recordEnvironment(event.getBlock(), ActionType.MOISTURE,
-                BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
+        audit.recordEnvironment(event.getBlock(), ActionType.MOISTURE, BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -70,15 +69,13 @@ public final class ModernMechanicsAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCauldron(CauldronLevelChangeEvent event) {
-        audit.record(event.getBlock(), ActionType.CAULDRON, actor(event.getEntity()),
-                BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
+        audit.record(event.getBlock(), ActionType.CAULDRON, actor(event.getEntity()), BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onTntPrime(TNTPrimeEvent event) {
         Block block = event.getBlock();
-        audit.record(block, ActionType.TNT_PRIME, actor(event.getPrimingEntity()),
-                BlockSnapshot.capture(block), BlockSnapshot.capture(block));
+        audit.record(block, ActionType.TNT_PRIME, actor(event.getPrimingEntity()), BlockSnapshot.capture(block), BlockSnapshot.capture(block));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -107,16 +104,14 @@ public final class ModernMechanicsAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDragonEgg(DragonEggFormEvent event) {
-        audit.recordEnvironment(event.getBlock(), ActionType.FORM,
-                BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
+        audit.recordEnvironment(event.getBlock(), ActionType.FORM, BlockSnapshot.capture(event.getBlock()), BlockSnapshot.fromState(event.getNewState()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onVault(VaultChangeStateEvent event) {
         Player player = event.getPlayer();
         Actor actor = player == null ? Actor.environment() : new Actor(player.getUniqueId(), player.getName());
-        audit.record(event.getBlock(), ActionType.VAULT, actor,
-                BlockSnapshot.capture(event.getBlock()), BlockSnapshot.capture(event.getBlock()));
+        audit.record(event.getBlock(), ActionType.VAULT, actor, BlockSnapshot.capture(event.getBlock()), BlockSnapshot.capture(event.getBlock()));
     }
 
     private static BlockSnapshot air() {
