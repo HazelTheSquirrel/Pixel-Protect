@@ -37,6 +37,7 @@ public final class InspectListener implements Listener {
         final int z = block.getZ();
         final String world = block.getWorld().getName();
         final var worldId = block.getWorld().getUID();
+        final String blockTranslationKey = block.getType().translationKey();
 
         inspect.lookup(worldId, x, y, z).thenAccept(entries -> player.getScheduler().run(plugin, task -> {
             if (!player.isOnline()) return;
@@ -54,7 +55,7 @@ public final class InspectListener implements Listener {
                     .append(Component.text(MessageService.coordinates(x, y, z), NamedTextColor.WHITE))
                     .append(Component.newline())
                     .append(Component.text("Block: ", NamedTextColor.GRAY))
-                    .append(Component.text(block.getType().translationKey(), NamedTextColor.WHITE))
+                    .append(Component.text(blockTranslationKey, NamedTextColor.WHITE))
                     .append(Component.newline())
                     .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY));
 
@@ -65,80 +66,40 @@ public final class InspectListener implements Listener {
                 message = message.append(Component.newline())
                         .append(Component.text("Gefundene Einträge: ", NamedTextColor.GRAY))
                         .append(Component.text(Integer.toString(Math.min(entries.size(), 10)), NamedTextColor.WHITE));
-                for (AuditEntry entry : entries.stream().limit(10).toList()) {
+                for (AuditEntry entry : entries.stream().limit(10).toList())
                     message = message.append(entryComponent(entry, automation.context(entry.transactionId())));
-                }
-                if (entries.size() > 10) {
-                    message = message.append(Component.newline())
-                            .append(Component.text("Weitere Einträge sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
-                }
+                if (entries.size() > 10)
+                    message = message.append(Component.newline()).append(Component.text("Weitere Einträge sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
             }
-
-            message = message.append(Component.newline())
-                    .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY));
-            player.sendMessage(message);
+            player.sendMessage(message.append(Component.newline()).append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY)));
         }, null));
     }
 
     private static Component entryComponent(AuditEntry entry, AutomationTracker.TransferContext context) {
         final String actor = entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName();
         Component result = Component.newline()
-                .append(Component.text("#" + entry.id(), NamedTextColor.YELLOW))
-                .append(Component.text(" • ", NamedTextColor.GRAY))
-                .append(Component.text(actor, NamedTextColor.WHITE))
-                .append(Component.newline())
-                .append(Component.text("  Aktion: ", NamedTextColor.GRAY))
-                .append(Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE))
-                .append(Component.newline())
-                .append(Component.text("  Zeit: ", NamedTextColor.GRAY))
-                .append(Component.text(MessageService.time(entry.time()), NamedTextColor.WHITE))
-                .append(Component.newline())
-                .append(Component.text("  Koordinaten: ", NamedTextColor.GRAY))
-                .append(Component.text(MessageService.coordinates(entry), NamedTextColor.WHITE));
-
+                .append(Component.text("#" + entry.id(), NamedTextColor.YELLOW)).append(Component.text(" • ", NamedTextColor.GRAY)).append(Component.text(actor, NamedTextColor.WHITE))
+                .append(Component.newline()).append(Component.text("  Aktion: ", NamedTextColor.GRAY)).append(Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE))
+                .append(Component.newline()).append(Component.text("  Zeit: ", NamedTextColor.GRAY)).append(Component.text(MessageService.time(entry.time()), NamedTextColor.WHITE))
+                .append(Component.newline()).append(Component.text("  Koordinaten: ", NamedTextColor.GRAY)).append(Component.text(MessageService.coordinates(entry), NamedTextColor.WHITE));
         final var changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
         if (!changes.isEmpty()) {
-            result = result.append(Component.newline())
-                    .append(Component.text("  Änderungen:", NamedTextColor.GRAY));
-            for (InventoryDiffService.ItemChange change : changes) {
-                final String prefix = change.amount() > 0 ? "+ " : "− ";
-                result = result.append(Component.newline())
-                        .append(Component.text("    " + prefix + Math.abs(change.amount()) + " × ",
-                                change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED))
-                        .append(change.displayName());
-            }
+            result = result.append(Component.newline()).append(Component.text("  Änderungen:", NamedTextColor.GRAY));
+            for (InventoryDiffService.ItemChange change : changes)
+                result = result.append(Component.newline()).append(Component.text("    " + (change.amount() > 0 ? "+ " : "− ") + Math.abs(change.amount()) + " × ", change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED)).append(change.displayName());
         }
-
         if (context != null) {
-            result = result.append(Component.newline())
-                    .append(Component.text("  Ursache: ", NamedTextColor.GRAY))
-                    .append(Component.text(context.cause(), NamedTextColor.YELLOW));
-            if (context.owner() != null) {
-                result = result.append(Component.newline())
-                        .append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY))
-                        .append(Component.text(context.owner().name(), NamedTextColor.WHITE));
-            }
+            result = result.append(Component.newline()).append(Component.text("  Ursache: ", NamedTextColor.GRAY)).append(Component.text(context.cause(), NamedTextColor.YELLOW));
+            if (context.owner() != null) result = result.append(Component.newline()).append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY)).append(Component.text(context.owner().name(), NamedTextColor.WHITE));
             result = appendLocation(result, "Quelle", context.source());
             result = appendLocation(result, "Ziel", context.destination());
-            if (context.mechanism() != null) {
-                result = result.append(Component.newline())
-                        .append(Component.text("  Mechanismus: ", NamedTextColor.GRAY))
-                        .append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE))
-                        .append(Component.text(" @ ", NamedTextColor.GRAY))
-                        .append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
-            }
+            if (context.mechanism() != null) result = result.append(Component.newline()).append(Component.text("  Mechanismus: ", NamedTextColor.GRAY)).append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE)).append(Component.text(" @ ", NamedTextColor.GRAY)).append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
         }
         return result;
     }
 
     private static Component appendLocation(Component base, String label, AutomationTracker.LocationData location) {
-        if (location == null) return base;
-        return base.append(Component.newline())
-                .append(Component.text("  " + label + ": ", NamedTextColor.GRAY))
-                .append(Component.text(location(location), NamedTextColor.WHITE));
+        return location == null ? base : base.append(Component.newline()).append(Component.text("  " + label + ": ", NamedTextColor.GRAY)).append(Component.text(location(location), NamedTextColor.WHITE));
     }
-
-    private static String location(AutomationTracker.LocationData location) {
-        return MessageService.coordinates(location.x(), location.y(), location.z());
-    }
+    private static String location(AutomationTracker.LocationData location) { return MessageService.coordinates(location.x(), location.y(), location.z()); }
 }
