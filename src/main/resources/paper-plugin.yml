@@ -4,3 +4,20 @@ main: de.pixelprotect.PixelProtect
 api-version: '26.2'
 author: HazelTheSquirrel
 description: High-performance forensic logging, inspection and rollback for Paper 26.2+
+default-permission: op
+permissions:
+  pixelprotect.status:
+    description: View PixelProtect storage and runtime status.
+    default: op
+  pixelprotect.inspect:
+    description: Use PixelProtect inspector mode.
+    default: op
+  pixelprotect.lookup:
+    description: Query PixelProtect audit history.
+    default: op
+  pixelprotect.rollback:
+    description: Create, inspect, cancel and restore PixelProtect rollback jobs.
+    default: op
+  pixelprotect.purge:
+    description: Purge historical PixelProtect audit data.
+    default: op
