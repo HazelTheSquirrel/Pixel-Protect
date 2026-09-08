@@ -3,20 +3,84 @@ package de.pixelprotect.model;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import org.bukkit.NamespacedKey;
-import org.bukkit.Registry;
+import org.bukkit.Location;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.Item;
 import org.bukkit.entity.EntityType;
-import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Vector;
+
 import java.util.Base64;
 import java.util.UUID;
 
-/** Small, safe entity snapshot used for deterministic audit/restore of supported entities. */
-public record EntitySnapshot(UUID uuid,String type,String name,String itemData) {
-    private static final Gson GSON=new Gson();
-    public static EntitySnapshot capture(Entity entity){String item=null;if(entity instanceof Item itemEntity)item=Base64.getEncoder().encodeToString(ItemStack.serializeAsBytes(itemEntity.getItemStack()));return new EntitySnapshot(entity.getUniqueId(),entity.getType().getKey().toString(),entity.getName(),item);}
-    public String serialize(){JsonObject o=new JsonObject();o.addProperty("uuid",uuid.toString());o.addProperty("type",type);o.addProperty("name",name);if(itemData!=null)o.addProperty("item",itemData);return GSON.toJson(o);}
-    public static EntitySnapshot parse(String data){if(data==null)return null;try{JsonObject o=JsonParser.parseString(data).getAsJsonObject();return new EntitySnapshot(UUID.fromString(o.get("uuid").getAsString()),o.get("type").getAsString(),o.get("name").getAsString(),o.has("item")?o.get("item").getAsString():null);}catch(RuntimeException e){if(!data.startsWith("pixelprotect:entity;"))return null;UUID id=null;String type=null,name="entity";for(String p:data.substring("pixelprotect:entity;".length()).split(";")){int i=p.indexOf('=');if(i<0)continue;String k=p.substring(0,i),v=p.substring(i+1);if(k.equals("uuid"))try{id=UUID.fromString(v);}catch(IllegalArgumentException ignored){}else if(k.equals("type"))type=v;else if(k.equals("name"))name=v;}return id==null||type==null?null:new EntitySnapshot(id,type,name,null);}}
-    public EntityType entityType(){try{return Registry.ENTITY_TYPE.get(NamespacedKey.fromString(type));}catch(RuntimeException e){return null;}}
+/** Full Paper EntitySnapshot plus immutable spatial/runtime metadata used by rollback. */
+public record EntitySnapshot(
+        UUID uuid, String type, String snapshot,
+        double x, double y, double z, float yaw, float pitch,
+        double velocityX, double velocityY, double velocityZ,
+        int fireTicks, int freezeTicks, int ticksLived,
+        boolean glowing, boolean invisible, boolean invulnerable, boolean silent,
+        boolean gravity, boolean persistent, String name, String itemData) {
+    private static final Gson GSON = new Gson();
+
+    public static EntitySnapshot capture(Entity entity) {
+        var paperSnapshot = entity.createSnapshot();
+        String snapshot = paperSnapshot == null ? null : paperSnapshot.getAsString();
+        Location location = entity.getLocation();
+        Vector velocity = entity.getVelocity();
+        String itemData = entity instanceof org.bukkit.entity.Item item
+                ? Base64.getEncoder().encodeToString(item.getItemStack().serializeAsBytes()) : null;
+        return new EntitySnapshot(entity.getUniqueId(), entity.getType().getKey().toString(), snapshot,
+                location.getX(), location.getY(), location.getZ(), location.getYaw(), location.getPitch(),
+                velocity.getX(), velocity.getY(), velocity.getZ(), entity.getFireTicks(), entity.getFreezeTicks(),
+                entity.getTicksLived(), entity.isGlowing(), entity.isInvisible(), entity.isInvulnerable(),
+                entity.isSilent(), entity.hasGravity(), entity.isPersistent(), entity.getCustomName(), itemData);
+    }
+
+    public String serialize() {
+        JsonObject o = new JsonObject();
+        o.addProperty("uuid", uuid.toString()); o.addProperty("type", type); o.addProperty("snapshot", snapshot);
+        o.addProperty("x", x); o.addProperty("y", y); o.addProperty("z", z);
+        o.addProperty("yaw", yaw); o.addProperty("pitch", pitch);
+        o.addProperty("vx", velocityX); o.addProperty("vy", velocityY); o.addProperty("vz", velocityZ);
+        o.addProperty("fire", fireTicks); o.addProperty("freeze", freezeTicks); o.addProperty("ticks", ticksLived);
+        o.addProperty("glowing", glowing); o.addProperty("invisible", invisible); o.addProperty("invulnerable", invulnerable);
+        o.addProperty("silent", silent); o.addProperty("gravity", gravity); o.addProperty("persistent", persistent);
+        if (name != null) o.addProperty("name", name); if (itemData != null) o.addProperty("item", itemData);
+        return GSON.toJson(o);
+    }
+
+    public static EntitySnapshot parse(String data) {
+        if (data == null || data.isBlank()) return null;
+        try {
+            JsonObject o = JsonParser.parseString(data).getAsJsonObject();
+            return new EntitySnapshot(UUID.fromString(o.get("uuid").getAsString()), o.get("type").getAsString(),
+                    string(o, "snapshot"), number(o,"x"), number(o,"y"), number(o,"z"), (float) number(o,"yaw"), (float) number(o,"pitch"),
+                    number(o,"vx"), number(o,"vy"), number(o,"vz"), integer(o,"fire"), integer(o,"freeze"), integer(o,"ticks"),
+                    bool(o,"glowing"), bool(o,"invisible"), bool(o,"invulnerable"), bool(o,"silent"), bool(o,"gravity"), bool(o,"persistent"),
+                    string(o,"name"), string(o,"item"));
+        } catch (RuntimeException ignored) { return legacy(data); }
+    }
+
+    private static EntitySnapshot legacy(String data) {
+        if (!data.startsWith("pixelprotect:entity;")) return null;
+        UUID uuid = null; String type = null, name = "entity";
+        for (String part : data.substring("pixelprotect:entity;".length()).split(";")) {
+            int i = part.indexOf('='); if (i < 0) continue;
+            String key = part.substring(0, i), value = part.substring(i + 1);
+            if (key.equals("uuid")) try { uuid = UUID.fromString(value); } catch (IllegalArgumentException ignored) { }
+            else if (key.equals("type")) type = value; else if (key.equals("name")) name = value;
+        }
+        return uuid == null || type == null ? null : new EntitySnapshot(uuid, type, null, 0,0,0,0,0,0,0,0,0,0,0,false,false,false,false,true,true,name,null);
+    }
+
+    public Location location(org.bukkit.World world) { return new Location(world, x, y, z, yaw, pitch); }
+
+    public EntityType entityType() {
+        try { return EntityType.fromName(type.substring(type.indexOf(':') + 1)); }
+        catch (RuntimeException ignored) { return null; }
+    }
+
+    private static String string(JsonObject o, String key) { return o.has(key) && !o.get(key).isJsonNull() ? o.get(key).getAsString() : null; }
+    private static double number(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsDouble() : 0D; }
+    private static int integer(JsonObject o, String key) { return o.has(key) ? o.get(key).getAsInt() : 0; }
+    private static boolean bool(JsonObject o, String key) { return o.has(key) && o.get(key).getAsBoolean(); }
 }
