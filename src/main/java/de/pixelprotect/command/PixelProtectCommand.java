@@ -19,6 +19,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -132,9 +133,13 @@ public final class PixelProtectCommand {
                     .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         }
-        database.query(query).thenCompose(entries -> {
+
+        final AuditQuery rollbackQuery = new AuditQuery(query.world(), query.centerX(), query.centerY(), query.centerZ(),
+                query.radius(), query.since(), query.until(), query.actorName(), query.includeActions(), query.excludeActions(),
+                query.includeBlocks(), query.excludeBlocks(), PAGE_SIZE, 0);
+        queryAllForRollback(rollbackQuery, maxRecords).thenCompose(entries -> {
             if (entries.isEmpty()) {
-                send(sender, parsed.preview() ? "PixelProtect: Die Vorschau enthält keine passenden Einträge." : "PixelProtect: Auf dieser Seite gibt es nichts zurückzusetzen.");
+                send(sender, parsed.preview() ? "PixelProtect: Die Vorschau enthält keine passenden Einträge." : "PixelProtect: Es gibt keine passenden Einträge zurückzusetzen.");
                 return CompletableFuture.<String>completedFuture(null);
             }
             if (parsed.preview()) return rollback.preview(entries).thenApply(r -> "preview:" + r.applied() + ":" + r.skipped());
@@ -150,6 +155,25 @@ public final class PixelProtectCommand {
         }).exceptionally(t -> { send(sender, "PixelProtect: Vorgang fehlgeschlagen – " + rootMessage(t)); return null; });
         send(sender, "PixelProtect: Rücksetzung wird vorbereitet …");
         return Command.SINGLE_SUCCESS;
+    }
+
+    private CompletableFuture<List<AuditEntry>> queryAllForRollback(AuditQuery base, int maximum) {
+        int boundedMaximum = Math.max(1, maximum);
+        return queryRollbackPage(base, 0, boundedMaximum, new ArrayList<>());
+    }
+
+    private CompletableFuture<List<AuditEntry>> queryRollbackPage(AuditQuery base, int offset, int maximum, List<AuditEntry> collected) {
+        int remaining = maximum - collected.size();
+        if (remaining <= 0) return CompletableFuture.completedFuture(List.copyOf(collected));
+        int limit = Math.min(PAGE_SIZE, remaining);
+        AuditQuery page = new AuditQuery(base.world(), base.centerX(), base.centerY(), base.centerZ(), base.radius(),
+                base.since(), base.until(), base.actorName(), base.includeActions(), base.excludeActions(),
+                base.includeBlocks(), base.excludeBlocks(), limit, offset);
+        return database.query(page).thenCompose(entries -> {
+            collected.addAll(entries);
+            if (entries.size() < limit) return CompletableFuture.completedFuture(List.copyOf(collected));
+            return queryRollbackPage(base, offset + entries.size(), maximum, collected);
+        });
     }
 
     private Location resolveLocation(CommandSourceStack source, SelectorParser.Parsed parsed) {
