@@ -30,8 +30,8 @@ public final class PixelProtect extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
         try {
-            final Path databaseFile = getDataFolder().toPath().resolve(getConfig().getString("storage.file", "pixelprotect.db"));
             database = new Database(databaseFile, getConfig().getInt("storage.queue-capacity", 10_000), getConfig().getInt("storage.batch-size", 256),
                     getConfig().getLong("storage.flush-interval-millis", 250L), getLogger());
             database.open();
@@ -44,7 +44,7 @@ public final class PixelProtect extends JavaPlugin {
         final Set<UUID> includedWorlds = resolveWorlds(getConfig().getStringList("worlds.include"));
         final Set<UUID> excludedWorlds = resolveWorlds(getConfig().getStringList("worlds.exclude"));
         final AuditService audit = new AuditService(database, includedWorlds, excludedWorlds);
-        api = new PixelProtectApiImpl(database, includedWorlds, databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
+        api = new PixelProtectApiImpl(database, includedWorlds, excludedWorlds, databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
         getServer().getServicesManager().register(PixelProtectApi.class, api, this, ServicePriority.Normal);
 
         final InspectService inspect = new InspectService(database);
