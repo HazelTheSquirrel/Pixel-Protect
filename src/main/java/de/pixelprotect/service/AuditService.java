@@ -43,15 +43,15 @@ public final class AuditService {
     }
 
     public CompletableFuture<Actor> latestPlacementActor(Block block) {
-        if (block == null || !isWorldIncluded(block.getWorld().getUID())) {
-            return CompletableFuture.completedFuture(null);
-        }
+        if (block == null || !isWorldIncluded(block.getWorld().getUID())) return CompletableFuture.completedFuture(null);
         long now = clock.millis();
         AuditQuery query = new AuditQuery(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ(), 0,
                 0L, now, null, Set.of(ActionType.PLACE), Set.of(), Set.of(), Set.of(), 1);
-        return database.query(query).thenApply(entries -> entries.isEmpty()
-                ? null
-                : new Actor(entries.getFirst().actor(), entries.getFirst().actorName()));
+        return database.query(query).thenApply(entries -> {
+            if (entries.isEmpty()) return null;
+            AuditEntry entry = entries.getFirst();
+            return entry.actor() == null ? null : new Actor(entry.actor(), entry.actorName());
+        });
     }
 
     public boolean record(Block block, ActionType action, Actor actor, BlockSnapshot before, BlockSnapshot after) {
@@ -60,7 +60,7 @@ public final class AuditService {
 
     public boolean record(Block block, ActionType action, Actor actor, BlockSnapshot before, BlockSnapshot after,
                           UUID transactionId, long sequence) {
-        if (!isWorldIncluded(block.getWorld().getUID()) || isSuppressed(block)) return false;
+        if (block == null || actor == null || !isWorldIncluded(block.getWorld().getUID()) || isSuppressed(block)) return false;
         return database.record(new AuditEntry(0L, clock.millis(), block.getWorld().getUID(), block.getX(), block.getY(), block.getZ(),
                 actor.uuid(), actor.name(), action, before.blockData(), after.blockData(), before.inventory(), after.inventory(),
                 before.blockEntity(), after.blockEntity(), transactionId, sequence));
@@ -72,6 +72,7 @@ public final class AuditService {
 
     public boolean recordPlayer(Block block, ActionType action, Player player, BlockSnapshot before, BlockSnapshot after,
                                 UUID transactionId, long sequence) {
+        if (player == null) return false;
         return record(block, action, new Actor(player.getUniqueId(), player.getName()), before, after, transactionId, sequence);
     }
 
@@ -81,7 +82,7 @@ public final class AuditService {
 
     public boolean recordEntity(Block block, ActionType action, Entity entity, BlockSnapshot before, BlockSnapshot after,
                                 UUID transactionId, long sequence) {
-        return record(block, action, new Actor(entity.getUniqueId(), entity.getName()), before, after, transactionId, sequence);
+        return record(block, action, Actor.environment(), before, after, transactionId, sequence);
     }
 
     public boolean recordEnvironment(Block block, ActionType action, BlockSnapshot before, BlockSnapshot after) {
@@ -89,7 +90,7 @@ public final class AuditService {
     }
 
     public void suppress(Block block) {
-        suppressed.put(new BlockKey(block), clock.millis() + 2_000L);
+        if (block != null) suppressed.put(new BlockKey(block), clock.millis() + 2_000L);
     }
 
     private boolean isSuppressed(Block block) {
