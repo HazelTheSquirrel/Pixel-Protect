@@ -17,7 +17,13 @@ This repository is being built as a real CoreProtect-style system: explicit doma
 ## Build
 
 ```text
-./gradlew build
+gradle build
 ```
 
 The resulting plugin is `build/libs/PixelProtect.jar`.
+
+## Current core
+
+The current core records player block place/break operations, explosions, fire, growth/spread, fluids, pistons and entity-caused block changes. Block transactions contain full Paper `BlockData` plus inventory snapshots for inventory-bearing block states. Rollback is region-scheduled and guarded against overwriting changes that happened after the recorded transaction.
+
+See `PIXELPROTECT_ROADMAP.md` and `docs/ARCHITECTURE.md` for the implementation plan and threading/data contracts.
