@@ -73,7 +73,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getBoolean("logging.fire", true), getConfig().getBoolean("logging.piston", true),
                 getConfig().getBoolean("logging.fluids", true), getConfig().getBoolean("logging.growth", true),
                 getConfig().getBoolean("logging.entity-block-changes", true)), this);
-        getServer().getPluginManager().registerEvents(new ModernMechanicsAuditListener(audit), this);
+        getServer().getPluginManager().registerEvents(new ModernMechanicsAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new PlayerAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new ActivityAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new PlayerTransactionAuditListener(audit), this);
