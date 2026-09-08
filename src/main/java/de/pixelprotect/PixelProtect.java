@@ -51,11 +51,11 @@ public final class PixelProtect extends JavaPlugin {
                         getConfig().getInt("storage.mysql.minimum-idle", 2),
                         getConfig().getLong("storage.mysql.connection-timeout-millis", 5000L),
                         getConfig().getLong("storage.mysql.leak-detection-millis", 0L));
-                default -> throw new IllegalArgumentException("Unsupported storage.backend: " + backend);
+                default -> throw new IllegalArgumentException("Nicht unterstütztes Speicher-Backend: " + backend);
             };
             database.open();
         } catch (IllegalArgumentException | SQLException | java.io.IOException ex) {
-            getLogger().severe("Failed to initialize storage backend '" + backend + "': " + ex.getMessage());
+            getLogger().severe("Speicher-Backend '" + backend + "' konnte nicht initialisiert werden: " + ex.getMessage());
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -87,7 +87,7 @@ public final class PixelProtect extends JavaPlugin {
                 getConfig().getInt("rollback.max-records", 100_000));
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,
                 commands -> commands.registrar().register(command.create().build(),
-                        "Audit and rollback world changes", List.of("pp")));
+                        "Protokolliert und setzt Weltänderungen zurück", List.of("pp")));
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
@@ -102,22 +102,22 @@ public final class PixelProtect extends JavaPlugin {
             Bukkit.getGlobalRegionScheduler().runAtFixedRate(this,
                     task -> logDiagnostics(), interval, interval);
         }
-        getLogger().info("PixelProtect enabled using storage backend: " + backend);
+        getLogger().info("PixelProtect wurde mit Speicher-Backend '" + backend + "' aktiviert.");
     }
 
     private void logDiagnostics() {
         if (api == null) return;
         final var d = api.diagnostics();
-        getLogger().info("Diagnostics: queue=" + d.queueSize() + ", audits=" + d.auditCount()
-                + ", overflow=" + d.overflowRecords() + ", failedRollbacks=" + d.failedRollbacks()
-                + ", schema=" + d.schemaVersion());
+        getLogger().info("Diagnose: Warteschlange=" + d.queueSize() + ", Protokolle=" + d.auditCount()
+                + ", Überlauf=" + d.overflowRecords() + ", fehlgeschlagene Rücksetzungen=" + d.failedRollbacks()
+                + ", Schema=" + d.schemaVersion());
     }
 
     private Set<UUID> resolveWorlds(List<String> names) {
         final Set<UUID> result = new HashSet<>();
         for (String name : names) {
             final var world = Bukkit.getWorld(name);
-            if (world == null) getLogger().warning("Configured world does not exist: " + name);
+            if (world == null) getLogger().warning("Konfigurierte Welt existiert nicht: " + name);
             else result.add(world.getUID());
         }
         return Set.copyOf(result);
