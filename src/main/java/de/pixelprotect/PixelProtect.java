@@ -72,7 +72,8 @@ public final class PixelProtect extends JavaPlugin {
 
         final AutomationTracker automation = new AutomationTracker();
         final InspectService inspect = new InspectService(database);
-        final RollbackService rollback = new RollbackService(this, audit, database);
+        final RollbackService rollback = new RollbackService(this, audit, database,
+                getConfig().getInt("rollback.max-concurrent-jobs", 1));
         getServer().getPluginManager().registerEvents(new BlockAuditListener(this, audit,
                 getConfig().getBoolean("logging.block-place-break", true),
                 getConfig().getBoolean("logging.explosions", true),
