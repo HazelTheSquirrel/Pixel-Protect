@@ -6,9 +6,10 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.inventory.HopperInventorySearchEvent;
 import org.bukkit.plugin.Plugin;
 
-/** Captures the only reliable player-to-automation link: who placed or removed the mechanism. */
+/** Captures player ownership and the explicit source/target search performed by hoppers. */
 public final class AutomationAuditListener implements Listener {
     private final AutomationTracker tracker;
 
@@ -24,5 +25,10 @@ public final class AutomationAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
         tracker.recordRemoval(event.getBlock());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onHopperSearch(HopperInventorySearchEvent event) {
+        tracker.recordHopperSearch(event);
     }
 }
