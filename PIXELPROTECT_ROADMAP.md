@@ -9,7 +9,7 @@ Legende: **DONE** = implementiert und CI-validiert, **PARTIAL** = implementiert,
 - **PARTIAL** Transaction identity / sequence in audit records
 - **PARTIAL** Durable audit queue with disk overflow spool
 - **PARTIAL** BlockEntity snapshots (inventories, signs, skull/spawner state; additional TileState adapters still open)
-- **PARTIAL** Entity snapshots using Paper `EntitySnapshot` plus exact runtime metadata
+- **PARTIAL** Entity snapshots using Paper `EntitySnapshot` plus runtime metadata
 - **PARTIAL** Entity rollback / recreation with conflict guards; exact UUID-preserving recreation across restart remains open with public Paper APIs
 - **PARTIAL** Rollback job persistence and restart recovery
 - **PARTIAL** Rollback failure status handling and compensation within a region group
@@ -26,8 +26,8 @@ Legende: **DONE** = implementiert und CI-validiert, **PARTIAL** = implementiert,
 - **PARTIAL** Multi-block transaction IDs and region-safe scheduling
 - **PARTIAL** Piston transaction grouping; complete piston/slime/honey/head/base semantics remain open
 - **PARTIAL** Entity event coverage (spawn/death/remove/drop/pickup/despawn/projectile)
-- **OPEN** Dedicated entity audit records wired end-to-end to the originating audit transaction
-- **OPEN** Dedicated inventory transaction/diff records wired end-to-end
+- **PARTIAL** Dedicated entity audit schema and persistence API exist; end-to-end audit-id/transaction wiring remains open
+- **PARTIAL** Dedicated inventory audit schema and persistence API exist; slot-level transaction wiring remains open
 - **OPEN** Full entity cause attribution (spawn reason, death cause, remove cause, projectile hit/shooter)
 - **PARTIAL** BlockEntity restore guards
 - **OPEN** Full adapters for banners, beacons, beehives, decorated pots, lecterns, jukeboxes, trial spawners, vaults and other current TileState types
@@ -41,18 +41,18 @@ Legende: **DONE** = implementiert und CI-validiert, **PARTIAL** = implementiert,
 - **DONE** SQLite WAL / foreign-key enforcement / busy timeout
 - **DONE** Durable overflow spool
 - **PARTIAL** Query/index hardening
+- **PARTIAL** Configurable world include/exclude filtering (world-name configuration resolved at startup)
 - **OPEN** Storage backend abstraction
 - **OPEN** MySQL/MariaDB backend using the existing HikariCP + Connector/J dependencies
-- **OPEN** Configurable include/exclude worlds
-- **OPEN** Retention maintenance metrics
-- **OPEN** Operational diagnostics / health metrics
+- **PARTIAL** Retention maintenance metrics
+- **PARTIAL** Operational diagnostics / health metrics and public diagnostics API
 - **OPEN** Database corruption/integrity recovery workflow
 
 ## P3 — Ecosystem / API / verification
 
-- **OPEN** Protection-plugin attribution hooks
+- **PARTIAL** Protection-plugin attribution API hook registry exists; concrete plugin adapters remain open
 - **OPEN** Optional WorldGuard/Lands/other region integration adapters
-- **OPEN** Public PixelProtect API
+- **PARTIAL** Public PixelProtect API with service registration, diagnostics, world checks and protection attribution hooks
 - **OPEN** Stable transaction/event API for external integrations
 - **OPEN** Paper 26.2 integration test server and scenario suite
 - **OPEN** Performance/load benchmark suite
