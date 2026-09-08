@@ -97,9 +97,15 @@ public final class PixelProtectCommand {
         if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
         Location location = resolveLocation(source, parsed);
         if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
-        AuditQuery query = query(location, parsed);
+        AuditQuery query;
+        try {
+            query = query(location, parsed);
+        } catch (ArithmeticException e) {
+            return message(source.getSender(), "PixelProtect: Die Seitennummer ist zu groß.");
+        }
         if (parsed.countOnly()) {
-            database.count(query).thenAccept(n -> send(source.getSender(), "PixelProtect: " + n + " passende Protokolleinträge gefunden."));
+            database.count(query).thenAccept(n -> send(source.getSender(), "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
+                    .exceptionally(t -> { send(source.getSender(), "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
         } else {
             database.count(query).thenCombine(database.query(query), (n, entries) -> new PageResult(n, entries, parsed.page()))
                     .thenAccept(result -> sendLookup(source.getSender(), result))
@@ -115,9 +121,15 @@ public final class PixelProtectCommand {
         Location location = resolveLocation(source, parsed);
         if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
         CommandSender sender = source.getSender();
-        AuditQuery query = query(location, parsed);
+        final AuditQuery query;
+        try {
+            query = query(location, parsed);
+        } catch (ArithmeticException e) {
+            return message(sender, "PixelProtect: Die Seitennummer ist zu groß.");
+        }
         if (parsed.countOnly()) {
-            database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " passende Protokolleinträge gefunden."));
+            database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
+                    .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         }
         database.query(query).thenCompose(entries -> {
@@ -150,9 +162,11 @@ public final class PixelProtectCommand {
 
     private AuditQuery query(Location location, SelectorParser.Parsed parsed) {
         long now = System.currentTimeMillis();
+        long duration = parsed.durationMillis();
+        long since = duration >= now ? 0L : now - duration;
         int offset = Math.multiplyExact(parsed.page() - 1, PAGE_SIZE);
         return new AuditQuery(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(),
-                parsed.radius(), now - parsed.durationMillis(), now, parsed.user(), parsed.includeActions(), parsed.excludeActions(),
+                parsed.radius(), since, now, parsed.user(), parsed.includeActions(), parsed.excludeActions(),
                 parsed.includeBlocks(), parsed.excludeBlocks(), Math.min(PAGE_SIZE, maxRecords), offset);
     }
 
@@ -172,8 +186,10 @@ public final class PixelProtectCommand {
             UUID id = UUID.fromString(raw);
             rollback.statusAsync(id).thenAccept(job -> {
                 if (job == null) send(sender, "PixelProtect: Rücksetzauftrag nicht gefunden.");
-                else send(sender, "PixelProtect: Auftrag " + job.id() + " – Status: " + job.status() + " – verarbeitet: " + job.processed() + "/" + job.total() + ", angewendet: " + job.applied() + ", übersprungen: " + job.skipped() + (job.error() == null ? "" : " – Fehler: " + job.error()));
-            });
+                else send(sender, "PixelProtect: Auftrag " + job.id() + " – Status: " + MessageService.rollbackStatus(job.status())
+                        + " – verarbeitet: " + job.processed() + "/" + job.total() + ", angewendet: " + job.applied()
+                        + ", übersprungen: " + job.skipped() + (job.error() == null ? "" : " – Fehler: " + job.error()));
+            }).exceptionally(t -> { send(sender, "PixelProtect: Statusabfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return message(sender, "PixelProtect: Status des Rücksetzauftrags wird geladen …");
         } catch (IllegalArgumentException e) {
             return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig.");
@@ -185,7 +201,8 @@ public final class PixelProtectCommand {
             UUID id = UUID.fromString(raw);
             rollback.cancelAsync(id).thenAccept(cancelled -> send(sender, cancelled
                     ? "PixelProtect: Abbruch des Rücksetzauftrags wurde angefordert."
-                    : "PixelProtect: Rücksetzauftrag nicht gefunden oder bereits abgeschlossen."));
+                    : "PixelProtect: Rücksetzauftrag nicht gefunden oder bereits abgeschlossen."))
+                    .exceptionally(t -> { send(sender, "PixelProtect: Abbruch fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         } catch (IllegalArgumentException e) {
             return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig.");
@@ -193,12 +210,15 @@ public final class PixelProtectCommand {
     }
 
     private int purge(CommandSender sender, int days) {
-        database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L).thenAccept(n -> send(sender, "PixelProtect: " + n + " Protokolleinträge wurden gelöscht."));
+        database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L)
+                .thenAccept(n -> send(sender, "PixelProtect: " + n + " Protokolleinträge wurden gelöscht."))
+                .exceptionally(t -> { send(sender, "PixelProtect: Bereinigung fehlgeschlagen – " + rootMessage(t)); return null; });
         return message(sender, "PixelProtect: Bereinigung gestartet …");
     }
 
     private int status(CommandSender sender) {
-        database.count().thenAccept(n -> send(sender, "PixelProtect: Betriebsbereit. Schema " + database.schemaVersion() + ", Warteschlange " + database.queueSize() + ", gespeicherte Protokolleinträge: " + n + "."));
+        database.count().thenAccept(n -> send(sender, "PixelProtect: Betriebsbereit. Schema " + database.schemaVersion() + ", Warteschlange " + database.queueSize() + ", gespeicherte Protokolleinträge: " + n + "."))
+                .exceptionally(t -> { send(sender, "PixelProtect: Speicherstatus konnte nicht ermittelt werden – " + rootMessage(t)); return null; });
         return message(sender, "PixelProtect: Speicherstatus wird geprüft …");
     }
 
