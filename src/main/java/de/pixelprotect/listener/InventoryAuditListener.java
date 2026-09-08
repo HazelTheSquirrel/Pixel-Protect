@@ -130,8 +130,6 @@ public final class InventoryAuditListener implements Listener {
             }
         } catch (RuntimeException ignored) {
             // Audit failures must never break a server event pipeline.
-        } finally {
-            if (state.context != null) automation.forget(state.transactionId);
         }
     }
 
