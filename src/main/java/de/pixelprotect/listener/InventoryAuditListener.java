@@ -4,6 +4,7 @@ import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.Actor;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
+import org.bukkit.Bukkit;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
 import org.bukkit.entity.Player;
@@ -56,11 +57,9 @@ public final class InventoryAuditListener implements Listener {
         if (!(state instanceof Container container)) return;
         final var block = container.getBlock();
         final BlockSnapshot before = BlockSnapshot.capture(block);
-        block.getChunk().getScheduler().run(plugin, task -> {
+        Bukkit.getRegionScheduler().run(plugin, block.getWorld(), block.getX() >> 4, block.getZ() >> 4, task -> {
             final BlockSnapshot after = BlockSnapshot.capture(block);
-            if (!before.equals(after)) {
-                audit.record(block, ActionType.CONTAINER, actor, before, after);
-            }
-        }, null);
+            if (!before.equals(after)) audit.record(block, ActionType.CONTAINER, actor, before, after);
+        });
     }
 }
