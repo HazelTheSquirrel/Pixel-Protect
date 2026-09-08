@@ -1,0 +1,23 @@
+storage:
+  file: pixelprotect.db
+  queue-capacity: 10000
+  batch-size: 256
+  flush-interval-millis: 250
+
+retention:
+  enabled: true
+  days: 30
+
+logging:
+  block-place-break: true
+  explosions: true
+  fire: true
+  piston: true
+  fluids: true
+  growth: true
+  entity-block-changes: true
+
+rollback:
+  max-hours: 168
+  max-radius: 128
+  max-records: 100000

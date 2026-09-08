@@ -1,0 +1,6 @@
+name: PixelProtect
+version: '0.1.0'
+main: de.pixelprotect.PixelProtect
+api-version: '26.2'
+author: HazelTheSquirrel
+description: Standalone CoreProtect-style audit and rollback system for Paper 26.2+
