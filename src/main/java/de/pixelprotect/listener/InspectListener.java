@@ -118,8 +118,8 @@ public final class InspectListener implements Listener {
                         .append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY))
                         .append(Component.text(context.owner().name(), NamedTextColor.WHITE));
             }
-            result = appendLocation(result, "Quelle", context.source())
-                    .appendLocation("Ziel", context.destination());
+            result = appendLocation(result, "Quelle", context.source());
+            result = appendLocation(result, "Ziel", context.destination());
             if (context.mechanism() != null) {
                 result = result.append(Component.newline())
                         .append(Component.text("  Mechanismus: ", NamedTextColor.GRAY))
