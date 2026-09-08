@@ -38,4 +38,11 @@ final class InventoryDiffServiceTest {
         assertTrue(InventoryDiffService.matchesEncoded(new String[]{"stone:1"}, "", false));
         assertTrue(InventoryDiffService.diffEncoded(null, null).contains("\"changes\":[]"));
     }
+
+    @Test
+    void emptyAndMalformedItemStacksNeverEscapeDiffCalculation() {
+        assertTrue(InventoryDiffService.itemChanges(null, null).isEmpty());
+        assertTrue(InventoryDiffService.itemChanges(new org.bukkit.inventory.ItemStack[0],
+                new org.bukkit.inventory.ItemStack[0]).isEmpty());
+    }
 }
