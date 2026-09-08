@@ -49,11 +49,7 @@ public class AsyncOverflowDatabase extends Database {
         if (!overflowRunning.get()) return false;
         final String line;
         try { line = GSON.toJson(entry) + System.lineSeparator(); }
-        catch (RuntimeException ex) {
-            logger.log(Level.SEVERE, "Audit record could not be serialized for overflow storage.", ex);
-            overflowDropped.incrementAndGet();
-            return false;
-        }
+        catch (RuntimeException ex) { logger.log(Level.SEVERE, "Audit record could not be serialized for overflow storage.", ex); overflowDropped.incrementAndGet(); return false; }
         if (!overflowQueue.offer(line)) { overflowDropped.incrementAndGet(); return false; }
         overflowAccepted.incrementAndGet();
         return true;
@@ -64,8 +60,7 @@ public class AsyncOverflowDatabase extends Database {
         return executeAsync(() -> {
             flushQueue();
             try (PreparedStatement statement = connection.prepareStatement("DELETE FROM audit WHERE time < ? AND id NOT IN (SELECT audit_id FROM rollback_job_entries)")) {
-                statement.setLong(1, cutoff);
-                return statement.executeUpdate();
+                statement.setLong(1, cutoff); return statement.executeUpdate();
             }
         });
     }
@@ -75,9 +70,7 @@ public class AsyncOverflowDatabase extends Database {
     public int overflowQueueSize() { return overflowQueue.size(); }
 
     @Override
-    protected void replayOverflow() {
-        synchronized (overflowFileLock) { super.replayOverflow(); }
-    }
+    protected void replayOverflow() { synchronized (overflowFileLock) { super.replayOverflow(); } }
 
     private void writeOverflowLoop() {
         while (overflowRunning.get() || !overflowQueue.isEmpty()) {
@@ -88,8 +81,7 @@ public class AsyncOverflowDatabase extends Database {
                 if (!overflowRunning.get()) Thread.currentThread().interrupt();
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, "Failed to persist an audit overflow record.", ex);
-                try { Thread.sleep(250L); }
-                catch (InterruptedException interrupted) { if (!overflowRunning.get()) Thread.currentThread().interrupt(); }
+                try { Thread.sleep(250L); } catch (InterruptedException interrupted) { if (!overflowRunning.get()) Thread.currentThread().interrupt(); }
             }
         }
     }
@@ -104,10 +96,9 @@ public class AsyncOverflowDatabase extends Database {
 
     @Override
     public void close() {
+        super.close();
         overflowRunning.set(false);
         overflowWriter.interrupt();
-        try { overflowWriter.join(10_000L); }
-        catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
-        super.close();
+        try { overflowWriter.join(10_000L); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
     }
 }
