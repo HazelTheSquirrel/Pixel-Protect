@@ -6,6 +6,7 @@ import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InventoryDiffService;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
 import org.bukkit.block.DoubleChest;
@@ -20,7 +21,6 @@ import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -38,10 +38,6 @@ public final class InventoryAuditListener implements Listener {
     private final AuditService audit;
     private final AutomationTracker automation;
     private final Map<Object, PendingEvent> pending = new IdentityHashMap<>();
-
-    public InventoryAuditListener(Plugin plugin, AuditService audit) {
-        this(audit, new AutomationTracker());
-    }
 
     public InventoryAuditListener(AuditService audit, AutomationTracker automation) {
         this.audit = audit;
@@ -152,9 +148,7 @@ public final class InventoryAuditListener implements Listener {
         for (int index = 0; index < state.before.size(); index++) {
             Snapshot before = state.before.get(index);
             Snapshot after = snapshot(before.block);
-            if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) {
-                continue;
-            }
+            if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) continue;
             changes.add(new ChangedSnapshot(before.block, before, after, index));
         }
         return List.copyOf(changes);
@@ -187,10 +181,10 @@ public final class InventoryAuditListener implements Listener {
         }
     }
 
-    private Snapshot snapshot(org.bukkit.block.Block block) {
+    private Snapshot snapshot(Block block) {
         try {
             if (!(block.getState() instanceof Container container)) return null;
-            final BlockSnapshot snapshot = BlockSnapshot.capture(block);
+            BlockSnapshot snapshot = BlockSnapshot.capture(block);
             return new Snapshot(block, snapshot, cloneContents(container.getInventory().getContents()));
         } catch (RuntimeException ignored) {
             return null;
@@ -210,11 +204,11 @@ public final class InventoryAuditListener implements Listener {
 
     private record PendingEvent(UUID transactionId, AutomationTracker.TransferContext context, List<Snapshot> before) {}
 
-    private record Snapshot(org.bukkit.block.Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) {
+    private record Snapshot(Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) {
         private Snapshot {
             inventoryContents = cloneContents(inventoryContents);
         }
     }
 
-    private record ChangedSnapshot(org.bukkit.block.Block block, Snapshot before, Snapshot after, long sequence) {}
+    private record ChangedSnapshot(Block block, Snapshot before, Snapshot after, long sequence) {}
 }
