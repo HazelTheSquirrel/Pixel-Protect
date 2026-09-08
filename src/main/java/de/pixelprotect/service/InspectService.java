@@ -7,6 +7,7 @@ import org.bukkit.entity.Player;
 
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class InspectService {
@@ -33,11 +34,16 @@ public final class InspectService {
         enabled.remove(player.getUniqueId());
     }
 
-    public java.util.concurrent.CompletableFuture<java.util.List<AuditEntry>> lookup(Player player) {
+    public CompletableFuture<java.util.List<AuditEntry>> lookup(Player player) {
         final var block = player.getTargetBlockExact(8);
-        if (block == null) return java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of());
+        if (block == null) return CompletableFuture.completedFuture(java.util.List.of());
+        return lookup(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+    }
+
+    public CompletableFuture<java.util.List<AuditEntry>> lookup(UUID world, int x, int y, int z) {
         final long now = System.currentTimeMillis();
-        return database.query(new AuditQuery(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ(),
-                0, now - 7L * 86_400_000L, now, null, Set.of(), Set.of(), Set.of(), Set.of(), 15));
+        return database.query(new AuditQuery(world, x, y, z, 0,
+                now - 7L * 86_400_000L, now, null,
+                Set.of(), Set.of(), Set.of(), Set.of(), 15));
     }
 }
