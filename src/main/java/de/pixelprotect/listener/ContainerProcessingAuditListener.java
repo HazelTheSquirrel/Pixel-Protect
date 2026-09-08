@@ -5,7 +5,6 @@ import de.pixelprotect.model.Actor;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.InventoryDiffService;
-import io.papermc.paper.event.block.CrafterCraftEvent;
 import org.bukkit.block.Block;
 import org.bukkit.block.Container;
 import org.bukkit.event.EventHandler;
@@ -13,6 +12,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockCookEvent;
 import org.bukkit.event.block.BlockDispenseEvent;
+import org.bukkit.event.block.CrafterCraftEvent;
 import org.bukkit.event.inventory.BrewEvent;
 import org.bukkit.event.inventory.FurnaceExtractEvent;
 import org.bukkit.plugin.Plugin;
@@ -52,7 +52,7 @@ public final class ContainerProcessingAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onExtractBefore(FurnaceExtractEvent event) {
-        capture(event, event.getBlock(), new de.pixelprotect.model.Actor(event.getPlayer().getUniqueId(), event.getPlayer().getName()));
+        capture(event, event.getBlock(), new Actor(event.getPlayer().getUniqueId(), event.getPlayer().getName()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
