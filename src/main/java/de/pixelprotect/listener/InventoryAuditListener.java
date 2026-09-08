@@ -7,6 +7,7 @@ import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.InventoryDiffService;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
+import org.bukkit.block.DoubleChest;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -16,6 +17,7 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
@@ -106,7 +108,6 @@ public final class InventoryAuditListener implements Listener {
                 if (after == null || !InventoryDiffService.hasInventoryChanges(before.inventoryContents, after.inventoryContents)) {
                     continue;
                 }
-
                 audit.record(before.block, ActionType.CONTAINER, actor,
                         before.snapshot, after.snapshot, state.transactionId, index);
             }
@@ -118,10 +119,21 @@ public final class InventoryAuditListener implements Listener {
     private Snapshot snapshot(Inventory inventory) {
         if (inventory == null) return null;
         try {
-            final BlockState state = inventory.getHolder() instanceof BlockState blockState ? blockState : null;
-            if (!(state instanceof Container)) return null;
-            final var block = state.getBlock();
-            return snapshot(block);
+            InventoryHolder holder = inventory.getHolder();
+            if (holder instanceof BlockState state && state instanceof Container) {
+                return snapshot(state.getBlock());
+            }
+            if (holder instanceof DoubleChest doubleChest) {
+                InventoryHolder left = doubleChest.getLeftSide();
+                if (left instanceof BlockState state && state instanceof Container) {
+                    return snapshot(state.getBlock());
+                }
+                InventoryHolder right = doubleChest.getRightSide();
+                if (right instanceof BlockState state && state instanceof Container) {
+                    return snapshot(state.getBlock());
+                }
+            }
+            return null;
         } catch (RuntimeException ignored) {
             return null;
         }
