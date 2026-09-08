@@ -4,6 +4,7 @@ import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.Actor;
 import de.pixelprotect.model.BlockSnapshot;
 import de.pixelprotect.service.AuditService;
+import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InventoryDiffService;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
@@ -29,17 +30,25 @@ import java.util.UUID;
 
 /**
  * Forensic container audit listener. Player events snapshot before mutation at LOWEST and compare
- * against the MONITOR state. Automated inventory transfers are recorded as environment actions and
- * retain a shared transaction id so source and destination can be correlated without inventing a player.
+ * against MONITOR state. Automated transfers share one transaction id and are correlated with a
+ * tracked hopper/dropper/dispenser/crafter when the endpoint proves the mechanism involved.
  */
 public final class InventoryAuditListener implements Listener {
-    private final Plugin plugin;
     private final AuditService audit;
+    private final AutomationTracker automation;
     private final Map<Object, PendingEvent> pending = new IdentityHashMap<>();
 
     public InventoryAuditListener(Plugin plugin, AuditService audit) {
-        this.plugin = plugin;
+        this(audit, new AutomationTracker());
+    }
+
+    public InventoryAuditListener(AuditService audit, AutomationTracker automation) {
         this.audit = audit;
+        this.automation = automation;
+    }
+
+    public AutomationTracker automation() {
+        return automation;
     }
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
@@ -64,7 +73,9 @@ public final class InventoryAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onMoveBefore(InventoryMoveItemEvent event) {
-        captureBefore(event, List.of(event.getSource(), event.getDestination()));
+        UUID transactionId = UUID.randomUUID();
+        AutomationTracker.TransferContext context = automation.trackTransfer(transactionId, event.getSource(), event.getDestination());
+        captureBefore(event, List.of(event.getSource(), event.getDestination()), transactionId, context);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
@@ -83,6 +94,11 @@ public final class InventoryAuditListener implements Listener {
     }
 
     private void captureBefore(Object event, List<Inventory> inventories) {
+        captureBefore(event, inventories, UUID.randomUUID(), null);
+    }
+
+    private void captureBefore(Object event, List<Inventory> inventories, UUID transactionId,
+                               AutomationTracker.TransferContext context) {
         List<Snapshot> snapshots = new ArrayList<>();
         for (Inventory inventory : inventories) {
             Snapshot snapshot = snapshot(inventory);
@@ -90,11 +106,11 @@ public final class InventoryAuditListener implements Listener {
         }
         synchronized (pending) {
             if (snapshots.isEmpty()) pending.remove(event);
-            else pending.put(event, new PendingEvent(UUID.randomUUID(), snapshots));
+            else pending.put(event, new PendingEvent(transactionId, context, snapshots));
         }
     }
 
-    private void finish(Object event, Actor actor) {
+    private void finish(Object event, Actor defaultActor) {
         final PendingEvent state;
         synchronized (pending) {
             state = pending.remove(event);
@@ -102,6 +118,7 @@ public final class InventoryAuditListener implements Listener {
         if (state == null) return;
 
         try {
+            Actor actor = state.context == null ? defaultActor : state.context.attributedActor();
             for (int index = 0; index < state.before.size(); index++) {
                 Snapshot before = state.before.get(index);
                 Snapshot after = snapshot(before.block);
@@ -113,6 +130,8 @@ public final class InventoryAuditListener implements Listener {
             }
         } catch (RuntimeException ignored) {
             // Audit failures must never break a server event pipeline.
+        } finally {
+            if (state.context != null) automation.forget(state.transactionId);
         }
     }
 
@@ -120,18 +139,12 @@ public final class InventoryAuditListener implements Listener {
         if (inventory == null) return null;
         try {
             InventoryHolder holder = inventory.getHolder();
-            if (holder instanceof BlockState state && state instanceof Container) {
-                return snapshot(state.getBlock());
-            }
+            if (holder instanceof BlockState state && state instanceof Container) return snapshot(state.getBlock());
             if (holder instanceof DoubleChest doubleChest) {
                 InventoryHolder left = doubleChest.getLeftSide();
-                if (left instanceof BlockState state && state instanceof Container) {
-                    return snapshot(state.getBlock());
-                }
+                if (left instanceof BlockState state && state instanceof Container) return snapshot(state.getBlock());
                 InventoryHolder right = doubleChest.getRightSide();
-                if (right instanceof BlockState state && state instanceof Container) {
-                    return snapshot(state.getBlock());
-                }
+                if (right instanceof BlockState state && state instanceof Container) return snapshot(state.getBlock());
             }
             return null;
         } catch (RuntimeException ignored) {
@@ -160,8 +173,7 @@ public final class InventoryAuditListener implements Listener {
         return player == null ? Actor.environment() : new Actor(player.getUniqueId(), player.getName());
     }
 
-    private record PendingEvent(UUID transactionId, List<Snapshot> before) {
-    }
+    private record PendingEvent(UUID transactionId, AutomationTracker.TransferContext context, List<Snapshot> before) {}
 
     private record Snapshot(org.bukkit.block.Block block, BlockSnapshot snapshot, ItemStack[] inventoryContents) {
         private Snapshot {
