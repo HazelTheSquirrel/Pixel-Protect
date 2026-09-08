@@ -1,53 +1,88 @@
-# PixelProtect architecture
+# PixelProtect — release architecture
 
-PixelProtect is split into five responsibilities:
+Stand: 2026-09-08 · Paper 26.2 build 121 · Java 25
 
-- `model`: immutable audit-domain records and block/entity snapshots.
-- `listener`: Paper 26.2 events translated into immutable audit transactions.
-- `storage`: durable SQLite/MySQL/MariaDB access, bounded ingestion, batched writes and overflow persistence.
-- `service`: attribution, automation correlation, inspection, inventory diffs and guarded rollback orchestration.
-- `command`: Paper Brigadier command tree; database work is asynchronous and world mutation remains region-bound.
+PixelProtect is a standalone forensic audit and recovery system. The release line is `main`; the runtime contains no dependency on PixelRPG or another plugin.
 
-## Threading contract
+## Execution pipeline
 
-The event/region hot path captures immutable values and performs only bounded queue operations. Disk writes for saturated queues happen on the dedicated overflow writer. Database queries and writes run on the storage executor or JDBC pool.
+`Paper event → immutable capture → bounded audit queue → durable storage → deterministic query → transaction-aware planner → region-safe mutation → conflict verification → persistent result`
 
-Bukkit/Paper world state is never read from a database completion callback. When an asynchronous lookup needs world state, the callback schedules work back to the affected Paper region. Rollback uses the same rule.
+The design has one non-negotiable boundary: Bukkit/Paper world state is only read or mutated on the owning server/region context. Database work never crosses that boundary implicitly.
 
-## Audit transaction
+## Runtime layers
 
-A persisted audit entry contains:
+### `model`
+Immutable records define audit entries, selectors, actor identity and block/entity snapshots. Snapshots contain only data that can be safely captured and replayed through the public Paper API.
 
-1. timestamp
-2. world UUID and exact coordinates
-3. actor UUID/name when available
-4. action type
-5. exact Paper `BlockData` before and after
-6. inventory snapshots where applicable
-7. block-entity snapshots where applicable
-8. transaction UUID
-9. deterministic sequence number
+### `listener`
+Paper 26.2 events are converted into immutable records immediately. Events that represent actual state transitions carry before/after state. Pure forensic activity carries explicit metadata in `details` and is not classified as a reversible block transition.
 
-Entity lifecycle records use the same audit transaction identity and additionally persist an `EntitySnapshot` containing identity, type, position, rotation, velocity, lifecycle flags, item payload and causal metadata.
+### `storage`
+SQLite is the default single-writer backend. MySQL/MariaDB uses HikariCP and Connector/J. Schema creation and migration are automatic. Audit ingestion is bounded in memory; saturated entries are durably serialized to a dedicated overflow writer without blocking event or region threads.
+
+### `service`
+Attribution, automation correlation, inspection, inventory diffing and rollback planning operate on immutable data. Asynchronous completions that need world state schedule back to the owning region before touching Bukkit objects.
+
+### `command`
+The Paper lifecycle API registers the single `/pixelprotect` root. Lookup, inspection, rollback, restore, purge, status and version commands use the asynchronous storage path.
+
+## Audit transaction model
+
+Each audit row contains:
+
+1. monotonic database id
+2. millisecond timestamp
+3. world UUID and exact coordinates
+4. actor UUID/name when available
+5. explicit action taxonomy
+6. exact before/after Paper `BlockData`
+7. before/after inventory snapshots where applicable
+8. supported block-entity state where applicable
+9. transaction UUID
+10. deterministic sequence number
+11. forensic `details` for non-state metadata
+
+Entity lifecycle records retain the same transaction identity and store defensive public Paper `EntitySnapshot` information plus identity, location and causal metadata. Dedicated entity/inventory tables preserve the relationship without requiring versioned NMS.
 
 ## Automation attribution
 
-Automation transfers are represented as a causal chain rather than a bare container mutation:
+Automated transfers are correlated as:
 
 `actor → placed mechanism → source → mechanism → destination → resulting inventory diff`
 
-Hopper search links and mechanism ownership are kept in memory for low-latency correlation. If the owner is absent from memory, placement history is queried asynchronously and the resulting write is returned to the owning region before any Bukkit block access occurs.
+Mechanism ownership, hopper search links and short-lived transfer contexts are kept in memory. If direct ownership is unavailable, placement history is resolved asynchronously. No database callback reads a live block or inventory; the final world-side correlation is returned to the owning region.
 
-## Rollback contract
+## Snapshot and rollback safety
 
-Rollback is persistent and conflict-aware. Entries are grouped by chunk and dispatched through `RegionScheduler`. A block is mutated only when its live `BlockData`, inventory state and recorded block-entity state match the audit post-state. Entity rollback uses the same present/absent state model and refuses conflicting UUID state.
+Block snapshots capture full public Paper block state. Known block-entity types with stable public APIs are encoded explicitly. Unknown non-null block-entity state is treated as unsupported rather than as equal-to-empty, preventing false-positive conflict checks.
 
-Every applied entry is persisted in `rollback_job_entries`. Completed jobs can be restored by evaluating the inverse transition with the same conflict guards.
+Rollback jobs are persisted and grouped by chunk. Each mutation verifies the recorded post-state immediately before applying its inverse. Inventory and block-entity state participate in the same guard. Entity rollback explicitly distinguishes expected-present from expected-absent state and only recreates non-player entities when the live UUID state is conflict-free.
 
-## Storage contract
+Every applied audit id is persisted in `rollback_job_entries`. A completed rollback can therefore be restored by applying the inverse transition with the same conflict guards. A `RUNNING` job found during startup is marked `FAILED` with an explicit restart error.
 
-SQLite uses WAL, foreign keys and a busy timeout. MySQL/MariaDB uses HikariCP. Schema creation/migration is automatic. Rollback references protect audit rows from retention deletion. Overflow replay is serialized with active spool writes so the durable JSONL file cannot be moved while a writer is appending to it.
+## Storage durability
 
-## Command contract
+SQLite is configured with WAL, `synchronous=NORMAL`, foreign keys and a busy timeout. MySQL/MariaDB is managed by HikariCP with configurable pool size, idle floor, connection timeout and optional leak detection.
 
-The only command root is `/pixelprotect`. Lookup, inspector, rollback, restore, purge, status and version operations all use the same asynchronous storage and region-safe mutation architecture.
+Overflow serialization and replay are protected by one file lock. Shutdown first drains the overflow writer and the database queue before closing the underlying storage connection.
+
+Schema version 8 contains:
+
+- `pixelprotect_meta`
+- `audit`
+- `rollback_jobs`
+- `rollback_job_entries`
+- `rollback_restores`
+- `entity_audit`
+- `inventory_audit`
+
+Retention never removes audit rows referenced by rollback jobs.
+
+## API boundary
+
+The implementation intentionally uses public Paper APIs and Mojang mappings only. There are no CraftBukkit imports, versioned NMS packages or deprecated `UnsafeValues` entity serialization shortcuts. This keeps the persistence contract independent of server internals and limits future-version changes to explicit public-API adapters.
+
+## Release surface
+
+The only command root is `/pixelprotect`. The current command surface is documented in `README.md` and is backed by the same storage, transaction and region-safety contracts described here.
