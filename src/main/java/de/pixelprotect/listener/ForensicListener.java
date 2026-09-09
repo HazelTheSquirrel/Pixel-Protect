@@ -12,6 +12,7 @@ import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.minecart.StorageMinecart;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -45,7 +46,6 @@ public final class ForensicListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
-        if (event.getPlayer() == null) return;
         Block block = event.getBlock();
         world.blockBroken(event.getPlayer(), block, block.getBlockData().getAsString());
     }
@@ -116,7 +116,7 @@ public final class ForensicListener implements Listener {
         Entity entity = event.getEntity();
         Player player = event.getPlayer();
         if (player == null) return;
-        if (!(entity instanceof org.bukkit.entity.StorageMinecart)) return;
+        if (!(entity instanceof StorageMinecart)) return;
         var location = entity.getLocation();
         Endpoint endpoint = Endpoint.entity(EndpointType.MINECART, entity.getUniqueId(), location.getWorld().getName(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), "storage_minecart");
         ownership.register(endpoint, new Owner(player.getUniqueId(), player.getName()));
