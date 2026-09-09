@@ -50,10 +50,10 @@ public final class EntityForensicsAuditListener implements Listener {
         LivingEntity victim = event.getEntity();
         Block block = victim.getLocation().getBlock();
         String killer = victim.getKiller() == null ? "none" : victim.getKiller().getUniqueId().toString();
-        String detail = "CAUSE=DEATH:KILLER=" + killer + ":DROPS=" + event.getDrops().size() + ":XP=" + event.getDroppedExp();
-        audit.record(block, ActionType.ENTITY_DEATH, victim instanceof Player player
-                        ? new Actor(player.getUniqueId(), player.getName()) : Actor.environment(),
-                snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
+        String detail = "CAUSE=DEATH:KILLER=" + killer + ":VICTIM=" + victim.getUniqueId()
+                + ":TYPE=" + victim.getType().getKey() + ":DROPS=" + event.getDrops().size()
+                + ":XP=" + event.getDroppedExp();
+        audit.record(block, ActionType.ENTITY_DEATH, Actor.environment(), snapshot(block), snapshot(block), detail, audit.newTransaction(), 0L);
     }
 
     private static BlockSnapshot snapshot(Block block) { return BlockSnapshot.capture(block); }
