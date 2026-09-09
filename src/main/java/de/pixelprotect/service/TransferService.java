@@ -12,8 +12,10 @@ import org.bukkit.event.entity.EntityPickupItemEvent;
 import org.bukkit.event.inventory.DragType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -29,10 +31,25 @@ public final class TransferService {
     private final AsyncLogQueue queue;
     private final OwnershipService ownership;
     private final ConcurrentHashMap<String, ActiveTransaction> activeTransactions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, UUID> openSessions = new ConcurrentHashMap<>();
 
     public TransferService(org.bukkit.plugin.java.JavaPlugin plugin, AsyncLogQueue queue, OwnershipService ownership) {
         this.queue = queue;
         this.ownership = ownership;
+    }
+
+    public void inventoryOpen(InventoryOpenEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        Endpoint endpoint = EndpointResolver.resolve(event.getInventory());
+        if (endpoint == null || endpoint.type() == EndpointType.PLAYER) return;
+        openSessions.put(sessionKey(player, endpoint), UUID.randomUUID());
+    }
+
+    public void inventoryClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+        Endpoint endpoint = EndpointResolver.resolve(event.getInventory());
+        if (endpoint == null || endpoint.type() == EndpointType.PLAYER) return;
+        openSessions.remove(sessionKey(player, endpoint));
     }
 
     public void playerClick(InventoryClickEvent event) {
@@ -178,9 +195,18 @@ public final class TransferService {
     private void submitPlayerTransfer(Player player, Endpoint source, Endpoint destination, ItemStack item, int amount, String action) {
         if (amount <= 0) return;
         item.setAmount(Math.min(amount, item.getMaxStackSize()));
-        UUID transactionId = transactionId(player, source, destination);
+        UUID transactionId = sessionTransaction(player, source, destination);
         queue.submitTransfer(new TransferLog(transactionId, Instant.now(), player.getUniqueId(), player.getName(),
                 player.getUniqueId(), player.getName(), source, destination, ItemCodec.key(item), ItemCodec.encode(item), amount, action));
+    }
+
+    private UUID sessionTransaction(Player player, Endpoint source, Endpoint destination) {
+        Endpoint external = source.type() == EndpointType.PLAYER ? destination : destination.type() == EndpointType.PLAYER ? source : null;
+        if (external != null) {
+            UUID session = openSessions.get(sessionKey(player, external));
+            if (session != null) return session;
+        }
+        return transactionId(player, source, destination);
     }
 
     private UUID transactionId(Player player, Endpoint source, Endpoint destination) {
@@ -204,6 +230,10 @@ public final class TransferService {
         String a = source.key();
         String b = destination.key();
         return a.compareTo(b) <= 0 ? a + "|" + b : b + "|" + a;
+    }
+
+    private static String sessionKey(Player player, Endpoint endpoint) {
+        return player.getUniqueId() + "|" + endpoint.key();
     }
 
     private void cleanupTransactions(long now) {
