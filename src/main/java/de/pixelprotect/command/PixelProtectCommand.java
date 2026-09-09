@@ -4,6 +4,7 @@ import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.AuditEntry;
 import de.pixelprotect.model.AuditQuery;
 import de.pixelprotect.service.InspectService;
@@ -20,7 +21,6 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
 import java.time.Duration;
@@ -262,9 +262,9 @@ public final class PixelProtectCommand {
             return;
         }
 
-        Component message = Component.text("----- PixelProtect Lookup Results -----", NamedTextColor.GOLD)
+        Component message = Component.text("----- PixelProtect Lookup -----", NamedTextColor.GOLD)
                 .append(Component.newline())
-                .append(Component.text(result.total() + " Treffer • Seite " + result.page() + "/" + pages, NamedTextColor.GRAY));
+                .append(Component.text(result.total() + " Änderungen • Seite " + result.page() + "/" + pages, NamedTextColor.GRAY));
 
         for (AuditEntry entry : result.entries()) {
             message = message.append(Component.newline())
@@ -288,24 +288,58 @@ public final class PixelProtectCommand {
     }
 
     private Component actionLine(AuditEntry entry) {
-        if (entry.action() == de.pixelprotect.model.ActionType.CONTAINER || entry.action() == de.pixelprotect.model.ActionType.INVENTORY
-                || entry.action() == de.pixelprotect.model.ActionType.CRAFT || entry.action() == de.pixelprotect.model.ActionType.TRADE) {
+        ActionType action = entry.action();
+        if (action == ActionType.CONTAINER) {
+            List<InventoryDiffService.ItemChange> changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
+            if (!changes.isEmpty()) return containerAction(changes);
+        }
+        if (action == ActionType.INVENTORY || action == ActionType.CRAFT || action == ActionType.TRADE) {
             List<InventoryDiffService.ItemChange> changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
             if (!changes.isEmpty()) return inventoryAction(changes);
         }
-
-        if (entry.action() == de.pixelprotect.model.ActionType.BREAK || entry.action() == de.pixelprotect.model.ActionType.BLOCK_BREAK) {
-            return Component.text("removed x1 ", NamedTextColor.RED)
-                    .append(Component.text(humanBlock(entry.beforeData()), NamedTextColor.AQUA));
+        if (action == ActionType.BREAK || action == ActionType.BLOCK_BREAK) {
+            return Component.text("hat x1 ", NamedTextColor.RED)
+                    .append(Component.text(humanBlock(entry.beforeData()), NamedTextColor.AQUA))
+                    .append(Component.text(" abgebaut", NamedTextColor.RED));
         }
-        if (entry.action() == de.pixelprotect.model.ActionType.PLACE) {
-            return Component.text("placed x1 ", NamedTextColor.GREEN)
-                    .append(Component.text(humanBlock(entry.afterData()), NamedTextColor.AQUA));
+        if (action == ActionType.PLACE) {
+            return Component.text("hat x1 ", NamedTextColor.GREEN)
+                    .append(Component.text(humanBlock(entry.afterData()), NamedTextColor.AQUA))
+                    .append(Component.text(" platziert", NamedTextColor.GREEN));
         }
 
-        Component result = Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE);
+        Component result = Component.text(MessageService.action(action), NamedTextColor.WHITE);
         if (entry.details() != null && !entry.details().isBlank()) {
             result = result.append(Component.text(" – " + compactDetails(entry.details()), NamedTextColor.GRAY));
+        }
+        return result;
+    }
+
+    private Component containerAction(List<InventoryDiffService.ItemChange> changes) {
+        Component result = Component.empty();
+        int shown = 0;
+        for (InventoryDiffService.ItemChange change : changes) {
+            if (shown > 0) result = result.append(Component.text(", ", NamedTextColor.DARK_GRAY));
+            String prefix;
+            NamedTextColor color;
+            if (change.removed()) {
+                prefix = "hat x" + Math.abs(change.amount()) + " ";
+                color = NamedTextColor.RED;
+                result = result.append(Component.text(prefix, color))
+                        .append(change.displayName())
+                        .append(Component.text(" aus dem Container genommen", color));
+            } else {
+                prefix = "hat x" + Math.abs(change.amount()) + " ";
+                color = NamedTextColor.GREEN;
+                result = result.append(Component.text(prefix, color))
+                        .append(change.displayName())
+                        .append(Component.text(" in den Container gelegt", color));
+            }
+            shown++;
+            if (shown >= MAX_ITEMS_PER_ENTRY) {
+                if (changes.size() > shown) result = result.append(Component.text(" …", NamedTextColor.DARK_GRAY));
+                break;
+            }
         }
         return result;
     }
@@ -315,10 +349,11 @@ public final class PixelProtectCommand {
         int shown = 0;
         for (InventoryDiffService.ItemChange change : changes) {
             if (shown > 0) result = result.append(Component.text(", ", NamedTextColor.DARK_GRAY));
-            String verb = change.removed() ? "removed " : "added ";
-            NamedTextColor verbColor = change.removed() ? NamedTextColor.RED : NamedTextColor.GREEN;
-            result = result.append(Component.text(verb + "x" + Math.abs(change.amount()) + " ", verbColor))
-                    .append(change.displayName());
+            NamedTextColor color = change.removed() ? NamedTextColor.RED : NamedTextColor.GREEN;
+            String verb = change.removed() ? " aus dem Inventar genommen" : " ins Inventar gelegt";
+            result = result.append(Component.text("hat x" + Math.abs(change.amount()) + " ", color))
+                    .append(change.displayName())
+                    .append(Component.text(verb, color));
             shown++;
             if (shown >= MAX_ITEMS_PER_ENTRY) {
                 if (changes.size() > shown) result = result.append(Component.text(" …", NamedTextColor.DARK_GRAY));
@@ -334,7 +369,7 @@ public final class PixelProtectCommand {
     }
 
     private static String humanBlock(String value) {
-        if (value == null || value.isBlank()) return "unknown";
+        if (value == null || value.isBlank()) return "Unbekannter Block";
         int separator = value.indexOf('[');
         String name = separator >= 0 ? value.substring(0, separator) : value;
         if (name.startsWith("minecraft:")) name = name.substring("minecraft:".length());
@@ -348,18 +383,18 @@ public final class PixelProtectCommand {
 
     private static String timeAgo(long timestamp) {
         long seconds = Math.max(0L, Duration.ofMillis(Math.max(0L, System.currentTimeMillis() - timestamp)).toSeconds());
-        if (seconds < 60) return seconds + "s ago";
+        if (seconds < 60) return seconds + "s her";
         long minutes = seconds / 60;
-        if (minutes < 60) return minutes + "m ago";
+        if (minutes < 60) return minutes + "m her";
         long hours = minutes / 60;
-        if (hours < 24) return hours + "h ago";
+        if (hours < 24) return hours + "h her";
         long days = hours / 24;
-        if (days < 7) return days + "d ago";
+        if (days < 7) return days + "d her";
         long weeks = days / 7;
-        if (weeks < 5) return weeks + "w ago";
+        if (weeks < 5) return weeks + "w her";
         long months = days / 30;
-        if (months < 12) return months + "mo ago";
-        return (days / 365) + "y ago";
+        if (months < 12) return months + "mo her";
+        return (days / 365) + "J her";
     }
 
     private static String actor(AuditEntry entry) { return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName(); }
