@@ -18,7 +18,6 @@ import org.bukkit.event.inventory.InventoryPickupItemEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -186,12 +185,11 @@ public final class TransferService {
 
     private UUID transactionId(Player player, Endpoint source, Endpoint destination) {
         long now = System.currentTimeMillis();
-        String endpointKey = nonPlayerEndpoint(source).key() + "|" + nonPlayerEndpoint(destination).key();
+        String endpointKey = transactionEndpointKey(source, destination);
         String key = player.getUniqueId() + "|" + endpointKey;
         ActiveTransaction active = activeTransactions.get(key);
         if (active != null && now - active.lastActivityMillis() <= PLAYER_TRANSACTION_WINDOW_MILLIS) {
-            ActiveTransaction refreshed = new ActiveTransaction(active.id(), now);
-            activeTransactions.put(key, refreshed);
+            activeTransactions.put(key, new ActiveTransaction(active.id(), now));
             return active.id();
         }
         UUID id = UUID.randomUUID();
@@ -200,8 +198,12 @@ public final class TransferService {
         return id;
     }
 
-    private static Endpoint nonPlayerEndpoint(Endpoint endpoint) {
-        return endpoint.type() == EndpointType.PLAYER ? endpoint : endpoint;
+    private static String transactionEndpointKey(Endpoint source, Endpoint destination) {
+        if (source.type() == EndpointType.PLAYER && destination.type() != EndpointType.PLAYER) return destination.key();
+        if (destination.type() == EndpointType.PLAYER && source.type() != EndpointType.PLAYER) return source.key();
+        String a = source.key();
+        String b = destination.key();
+        return a.compareTo(b) <= 0 ? a + "|" + b : b + "|" + a;
     }
 
     private void cleanupTransactions(long now) {
