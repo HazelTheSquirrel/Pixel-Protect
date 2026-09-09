@@ -10,73 +10,15 @@ import java.util.Base64;
 
 public final class ItemCodec {
     private final Gson gson;
-
-    public ItemCodec(Gson gson) {
-        this.gson = gson;
-    }
-
-    public String encode(ItemStack stack) {
-        return Base64.getEncoder().encodeToString(stack.serializeAsBytes());
-    }
-
-    public ItemStack decode(String encoded) {
-        return ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));
-    }
-
-    public String key(ItemStack stack) {
-        ItemStack one = stack.clone();
-        one.setAmount(1);
-        byte[] bytes = one.serializeAsBytes();
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
-            StringBuilder builder = new StringBuilder(96);
-            builder.append(stack.getType().getKey()).append(':');
-            for (byte value : digest) builder.append(String.format("%02x", value));
-            return builder.toString();
-        } catch (java.security.NoSuchAlgorithmException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    public String materialKey(ItemStack stack) {
-        return stack.getType().getKey().toString();
-    }
-
-    public String json(ItemStack stack) {
-        return gson.toJson(stack.serialize());
-    }
-
-    public String snapshot(Inventory inventory) {
-        StringBuilder result = new StringBuilder(inventory.getSize() * 64);
-        for (int slot = 0; slot < inventory.getSize(); slot++) {
-            if (slot > 0) result.append('.');
-            ItemStack stack = inventory.getItem(slot);
-            result.append(stack == null || stack.getType().isAir() ? "-" : encode(stack));
-        }
-        return result.toString();
-    }
-
-    public String hashSnapshot(String snapshot) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(snapshot.getBytes(StandardCharsets.UTF_8));
-            StringBuilder result = new StringBuilder(64);
-            for (byte value : digest) result.append(String.format("%02x", value));
-            return result.toString();
-        } catch (java.security.NoSuchAlgorithmException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    public ItemStack[] decodeSnapshot(String snapshot) {
-        String[] values = snapshot.split("\\.", -1);
-        ItemStack[] result = new ItemStack[values.length];
-        for (int i = 0; i < values.length; i++) result[i] = values[i].equals("-") ? null : decode(values[i]);
-        return result;
-    }
-
-    public void restore(Inventory inventory, String snapshot) {
-        ItemStack[] contents = decodeSnapshot(snapshot);
-        if (contents.length != inventory.getSize()) throw new IllegalArgumentException("Inventory snapshot size mismatch");
-        inventory.setContents(contents);
-    }
+    public ItemCodec(Gson gson){this.gson=gson;}
+    public String encode(ItemStack stack){return Base64.getEncoder().encodeToString(stack.serializeAsBytes());}
+    public ItemStack decode(String encoded){return ItemStack.deserializeBytes(Base64.getDecoder().decode(encoded));}
+    public String key(ItemStack stack){ItemStack one=stack.clone();one.setAmount(1);try{byte[] d=MessageDigest.getInstance("SHA-256").digest(one.serializeAsBytes());StringBuilder b=new StringBuilder(96).append(stack.getType().getKey()).append(':');for(byte v:d)b.append(String.format("%02x",v));return b.toString();}catch(Exception e){throw new IllegalStateException(e);}}
+    public String materialKey(ItemStack stack){return stack.getType().getKey().toString();}
+    public String json(ItemStack stack){return gson.toJson(stack.serialize());}
+    public String snapshot(Inventory inventory){return snapshot(inventory.getContents());}
+    public String snapshot(ItemStack[] contents){StringBuilder b=new StringBuilder(contents.length*64);for(int i=0;i<contents.length;i++){if(i>0)b.append('.');ItemStack s=contents[i];b.append(s==null||s.getType().isAir()?"-":encode(s));}return b.toString();}
+    public String hashSnapshot(String snapshot){try{byte[] d=MessageDigest.getInstance("SHA-256").digest(snapshot.getBytes(StandardCharsets.UTF_8));StringBuilder b=new StringBuilder(64);for(byte v:d)b.append(String.format("%02x",v));return b.toString();}catch(Exception e){throw new IllegalStateException(e);}}
+    public ItemStack[] decodeSnapshot(String snapshot){String[] v=snapshot.split("\\.",-1);ItemStack[] r=new ItemStack[v.length];for(int i=0;i<v.length;i++)r[i]=v[i].equals("-")?null:decode(v[i]);return r;}
+    public void restore(Inventory inventory,String snapshot){ItemStack[] c=decodeSnapshot(snapshot);if(c.length!=inventory.getSize())throw new IllegalArgumentException("Inventory snapshot size mismatch");inventory.setContents(c);}
 }
