@@ -16,6 +16,8 @@ public record BlockLog(
         int z,
         String beforeData,
         String afterData,
+        String beforeInventory,
+        String afterInventory,
         String action,
         String blockType
 ) {}
