@@ -8,7 +8,7 @@ storage:
   mysql:
     jdbc-url: jdbc:mysql://127.0.0.1:3306/pixelprotect
     username: pixelprotect
-    password: change-me
+    password: ''
     maximum-pool-size: 10
     minimum-idle: 2
     connection-timeout-millis: 5000
