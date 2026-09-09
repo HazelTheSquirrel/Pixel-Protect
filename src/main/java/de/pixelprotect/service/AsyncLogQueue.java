@@ -62,16 +62,17 @@ public final class AsyncLogQueue implements AutoCloseable {
             } catch (Throwable throwable) {
                 failure.compareAndSet(null, throwable);
                 errorHandler.accept(throwable);
-                if (record != null) {
-                    boolean requeued = false;
-                    while (!requeued) {
-                        try {
-                            requeued = queue.offer(record, 250, TimeUnit.MILLISECONDS);
-                        } catch (InterruptedException ignored) {
-                            if (!accepting.get()) return;
-                        }
-                    }
-                }
+                if (record != null) requeue(record);
+            }
+        }
+    }
+
+    private void requeue(Object record) {
+        for (;;) {
+            try {
+                if (queue.offer(record, 250, TimeUnit.MILLISECONDS)) return;
+            } catch (InterruptedException ignored) {
+                Thread.interrupted();
             }
         }
     }
