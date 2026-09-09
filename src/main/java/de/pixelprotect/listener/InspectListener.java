@@ -1,5 +1,6 @@
 package de.pixelprotect.listener;
 
+import de.pixelprotect.model.ActionType;
 import de.pixelprotect.model.AuditEntry;
 import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InspectService;
@@ -13,7 +14,12 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.plugin.Plugin;
 
+import java.util.List;
+
 public final class InspectListener implements Listener {
+    private static final int MAX_HISTORY_ENTRIES = 10;
+    private static final int MAX_DISPLAYED_SLOTS_PER_SNAPSHOT = 54;
+
     private final Plugin plugin;
     private final InspectService inspect;
     private final AutomationTracker automation;
@@ -73,11 +79,14 @@ public final class InspectListener implements Listener {
             } else {
                 message = message.append(Component.newline())
                         .append(Component.text("Gefundene Ereignisse: ", NamedTextColor.GRAY))
-                        .append(Component.text(Integer.toString(Math.min(entries.size(), 10)), NamedTextColor.WHITE));
-                for (AuditEntry entry : entries.stream().limit(10).toList())
+                        .append(Component.text(Integer.toString(Math.min(entries.size(), MAX_HISTORY_ENTRIES)), NamedTextColor.WHITE));
+                for (AuditEntry entry : entries.stream().limit(MAX_HISTORY_ENTRIES).toList()) {
                     message = message.append(entryComponent(entry, automation.context(entry.transactionId())));
-                if (entries.size() > 10)
-                    message = message.append(Component.newline()).append(Component.text("Weitere Ereignisse sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
+                }
+                if (entries.size() > MAX_HISTORY_ENTRIES) {
+                    message = message.append(Component.newline())
+                            .append(Component.text("Weitere Ereignisse sind vorhanden; maximal " + MAX_HISTORY_ENTRIES + " werden angezeigt.", NamedTextColor.DARK_GRAY));
+                }
             }
             player.sendMessage(message.append(Component.newline()).append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY)));
         }, null));
@@ -95,8 +104,8 @@ public final class InspectListener implements Listener {
                 .append(Component.newline()).append(Component.text("  Aktion: ", NamedTextColor.GRAY)).append(Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE))
                 .append(Component.newline()).append(Component.text("  Zeit: ", NamedTextColor.GRAY)).append(Component.text(MessageService.time(entry.time()), NamedTextColor.WHITE))
                 .append(Component.newline()).append(Component.text("  Spieler-UUID: ", NamedTextColor.GRAY)).append(Component.text(actorId, NamedTextColor.DARK_GRAY))
-                .append(Component.newline()).append(Component.text("  Vorher: ", NamedTextColor.GRAY)).append(Component.text(before, NamedTextColor.RED))
-                .append(Component.newline()).append(Component.text("  Nachher: ", NamedTextColor.GRAY)).append(Component.text(after, NamedTextColor.GREEN))
+                .append(Component.newline()).append(Component.text("  BLOCK VORHER: ", NamedTextColor.GRAY)).append(Component.text(before, NamedTextColor.RED))
+                .append(Component.newline()).append(Component.text("  BLOCK NACHHER: ", NamedTextColor.GRAY)).append(Component.text(after, NamedTextColor.GREEN))
                 .append(Component.newline()).append(Component.text("  Ursache: ", NamedTextColor.GRAY)).append(Component.text(source, NamedTextColor.YELLOW));
 
         if (entry.details() != null) {
@@ -105,24 +114,57 @@ public final class InspectListener implements Listener {
                     .append(Component.text(cleanDetails(entry.details()), NamedTextColor.WHITE));
         }
 
-        final var changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
+        result = appendInventorySnapshot(result, "INHALT VORHER", entry.beforeInventory(), NamedTextColor.RED);
+        result = appendInventorySnapshot(result, "INHALT NACHHER", entry.afterInventory(), NamedTextColor.GREEN);
+
+        final List<InventoryDiffService.ItemChange> changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
         if (!changes.isEmpty()) {
-            result = result.append(Component.newline()).append(Component.text("  Inventaränderungen:", NamedTextColor.GRAY));
-            for (InventoryDiffService.ItemChange change : changes)
-                result = result.append(Component.newline()).append(Component.text("    " + (change.amount() > 0 ? "+ " : "−") + Math.abs(change.amount()) + " × ", change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED)).append(change.displayName());
+            result = result.append(Component.newline()).append(Component.text("  ÄNDERUNGEN IM INHALT:", NamedTextColor.GOLD));
+            for (InventoryDiffService.ItemChange change : changes) {
+                String prefix = change.amount() > 0 ? "+ " : "− ";
+                result = result.append(Component.newline())
+                        .append(Component.text("    " + prefix + Math.abs(change.amount()) + " × ", change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED))
+                        .append(change.displayName());
+            }
         }
+
         if (context != null) {
-            if (context.owner() != null) result = result.append(Component.newline()).append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY)).append(Component.text(context.owner().name(), NamedTextColor.WHITE));
+            if (context.owner() != null) {
+                result = result.append(Component.newline()).append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY)).append(Component.text(context.owner().name(), NamedTextColor.WHITE));
+            }
             result = appendLocation(result, "Quelle", context.source());
             result = appendLocation(result, "Ziel", context.destination());
-            if (context.mechanism() != null)
+            if (context.mechanism() != null) {
                 result = result.append(Component.newline()).append(Component.text("  Mechanismus: ", NamedTextColor.GRAY))
                         .append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE))
                         .append(Component.text(" @ ", NamedTextColor.GRAY))
                         .append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
+            }
         }
-        if (entry.transactionId() != null)
+        if (entry.transactionId() != null) {
             result = result.append(Component.newline()).append(Component.text("  Transaktion: ", NamedTextColor.GRAY)).append(Component.text(entry.transactionId().toString(), NamedTextColor.DARK_GRAY));
+        }
+        return result;
+    }
+
+    private static Component appendInventorySnapshot(Component base, String label, byte[] encoded, NamedTextColor color) {
+        if (encoded == null || encoded.length == 0) return base;
+        List<InventoryDiffService.SlotItem> items = InventoryDiffService.occupiedSlots(encoded);
+        Component result = base.append(Component.newline()).append(Component.text("  " + label + ":", color));
+        if (items.isEmpty()) {
+            return result.append(Component.text(" leer", NamedTextColor.DARK_GRAY));
+        }
+        int displayed = 0;
+        for (InventoryDiffService.SlotItem item : items) {
+            if (displayed++ >= MAX_DISPLAYED_SLOTS_PER_SNAPSHOT) {
+                result = result.append(Component.newline()).append(Component.text("    … weitere Slots vorhanden", NamedTextColor.DARK_GRAY));
+                break;
+            }
+            result = result.append(Component.newline())
+                    .append(Component.text("    Slot " + item.slot() + ": ", NamedTextColor.GRAY))
+                    .append(Component.text(item.amount() + " × ", NamedTextColor.WHITE))
+                    .append(item.displayName());
+        }
         return result;
     }
 
@@ -140,8 +182,7 @@ public final class InspectListener implements Listener {
     }
 
     private static String normalizeState(String value) {
-        if (value == null || value.isBlank()) return "minecraft:air";
-        return value.replace("minecraft:", "minecraft:");
+        return value == null || value.isBlank() ? "minecraft:air" : value;
     }
 
     private static String cleanDetails(String value) {
