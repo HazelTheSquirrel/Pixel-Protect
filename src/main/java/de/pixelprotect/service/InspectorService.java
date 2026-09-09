@@ -3,10 +3,10 @@ package de.pixelprotect.service;
 import de.pixelprotect.database.DatabaseManager;
 import de.pixelprotect.model.BlockLog;
 import de.pixelprotect.model.Endpoint;
+import de.pixelprotect.model.EndpointType;
 import de.pixelprotect.model.TransferLog;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
-import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -23,7 +23,6 @@ public final class InspectorService {
     private final Set<UUID> enabled = ConcurrentHashMap.newKeySet();
 
     public InspectorService(org.bukkit.plugin.java.JavaPlugin plugin, DatabaseManager database, int limit) { this.plugin=plugin;this.database=database;this.limit=limit; }
-
     public boolean toggle(Player player) { if (enabled.remove(player.getUniqueId())) return false; enabled.add(player.getUniqueId()); return true; }
     public boolean isEnabled(Player player) { return enabled.contains(player.getUniqueId()); }
     public void disable(Player player) { enabled.remove(player.getUniqueId()); }
@@ -32,40 +31,58 @@ public final class InspectorService {
         if (!isEnabled(player)) return;
         String world=block.getWorld().getName(); int x=block.getX(),y=block.getY(),z=block.getZ();
         player.sendMessage(Component.text("Pixel-Protect: Datenbankabfrage läuft …", NamedTextColor.GRAY));
-        CompletableLookup lookup = new CompletableLookup(database, world,x,y,z,limit);
-        java.util.concurrent.CompletableFuture.supplyAsync(lookup::load).thenAccept(result -> Bukkit.getScheduler().runTask(plugin, () -> send(player,result)));
+        CompletableLookup lookup=new CompletableLookup(database,world,x,y,z,limit);
+        java.util.concurrent.CompletableFuture.supplyAsync(lookup::load).thenAccept(result -> Bukkit.getScheduler().runTask(plugin,()->send(player,result)));
     }
 
     private void send(Player player, Result result) {
         if (!player.isOnline()) return;
-        if (result.error != null) { player.sendMessage(Component.text("Pixel-Protect: Lookup fehlgeschlagen: "+result.error.getMessage(),NamedTextColor.RED)); return; }
-        if (result.blocks.isEmpty() && result.transfers.isEmpty()) { player.sendMessage(Component.text("Pixel-Protect: Keine Forensik-Einträge gefunden.",NamedTextColor.YELLOW)); return; }
+        if (result.error!=null) { player.sendMessage(Component.text("Pixel-Protect: Lookup fehlgeschlagen: "+result.error.getMessage(),NamedTextColor.RED)); return; }
+        if (result.blocks.isEmpty()&&result.transfers.isEmpty()) { player.sendMessage(Component.text("Pixel-Protect: Keine Forensik-Einträge gefunden.",NamedTextColor.YELLOW)); return; }
         player.sendMessage(Component.text("Pixel-Protect Forensik",NamedTextColor.GOLD));
-        record Tx(UUID id, List<DatabaseManager.StoredTransfer> transfers, List<DatabaseManager.StoredBlock> blocks) {}
+        record Tx(UUID id,List<DatabaseManager.StoredTransfer> transfers,List<DatabaseManager.StoredBlock> blocks) {}
         Map<UUID,Tx> grouped=new LinkedHashMap<>();
-        result.blocks.forEach(b -> grouped.computeIfAbsent(b.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).blocks().add(b));
-        result.transfers.forEach(t -> grouped.computeIfAbsent(t.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).transfers().add(t));
-        grouped.values().stream().sorted(Comparator.comparing(tx -> timestamp(tx), Comparator.reverseOrder())).limit(limit).forEach(tx -> {
-            UUID id=tx.id(); player.sendMessage(Component.text("["+rollbackId(id)+"]",NamedTextColor.AQUA).append(Component.text(" ")));
-            for (DatabaseManager.StoredBlock b:tx.blocks()) sendBlock(player,b.log());
-            for (DatabaseManager.StoredTransfer t:tx.transfers()) sendTransfer(player,t.log());
+        result.blocks.forEach(b->grouped.computeIfAbsent(b.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).blocks().add(b));
+        result.transfers.forEach(t->grouped.computeIfAbsent(t.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).transfers().add(t));
+        grouped.values().stream().sorted(Comparator.comparing(this::txTimestamp).reversed()).limit(limit).forEach(tx->{
+            player.sendMessage(Component.text("["+rollbackId(tx.id())+"]",NamedTextColor.AQUA));
+            tx.blocks().forEach(b->sendBlock(player,b.log()));
+            tx.transfers().forEach(t->sendTransfer(player,t.log()));
         });
     }
 
-    private static Instant timestamp(Object tx) { return tx instanceof Record r ? Instant.MIN : Instant.MIN; }
+    private Instant txTimestamp(Object tx){
+        @SuppressWarnings("unchecked")
+        var value=(Record)tx;
+        try {
+            var blocks=(List<DatabaseManager.StoredBlock>)value.getClass().getDeclaredMethod("blocks").invoke(value);
+            var transfers=(List<DatabaseManager.StoredTransfer>)value.getClass().getDeclaredMethod("transfers").invoke(value);
+            Instant latest=Instant.MIN;
+            for(var b:blocks)latest=latest.isAfter(b.log().timestamp())?latest:b.log().timestamp();
+            for(var t:transfers)latest=latest.isAfter(t.log().timestamp())?latest:t.log().timestamp();
+            return latest;
+        } catch (ReflectiveOperationException e) { return Instant.MIN; }
+    }
+
     private void sendBlock(Player p, BlockLog l) {
         String verb=l.action().equals("BREAK")?"abgebaut":"platziert";
         p.sendMessage(Component.text(l.playerName()+" hat "+l.blockType()+" "+verb+".",NamedTextColor.WHITE));
         p.sendMessage(Component.text("  "+l.world()+" "+l.x()+" "+l.y()+" "+l.z(),NamedTextColor.GRAY));
     }
+
     private void sendTransfer(Player p, TransferLog l) {
         String actor=l.actorName()==null?"UNKNOWN":l.actorName();
         String item=l.itemKey().replace("minecraft:","");
-        String verb=l.source().type()==de.pixelprotect.model.EndpointType.PLAYER?"in":"aus";
-        String prep=l.destination().type()==de.pixelprotect.model.EndpointType.PLAYER?"aus":"in";
-        p.sendMessage(Component.text(actor+" hat "+l.amount()+" "+item+" "+(verb.equals("in")?"vom Inventar in ":"aus ")+label(l.destination())+" gelegt.",NamedTextColor.WHITE));
-        p.sendMessage(Component.text("  "+location(l.source())+" -> "+location(l.destination())+"  "+verb+"/"+prep,NamedTextColor.GRAY));
+        String sentence;
+        if(l.source().type()==EndpointType.PLAYER&&l.destination().type()!=EndpointType.PLAYER)
+            sentence=actor+" hat "+l.amount()+" "+item+" vom Inventar in "+label(l.destination())+" gelegt.";
+        else if(l.destination().type()==EndpointType.PLAYER&&l.source().type()!=EndpointType.PLAYER)
+            sentence=actor+" hat "+l.amount()+" "+item+" aus "+label(l.source())+" ins Inventar gelegt.";
+        else sentence=actor+" hat "+l.amount()+" "+item+" von "+label(l.source())+" nach "+label(l.destination())+" bewegt.";
+        p.sendMessage(Component.text(sentence,NamedTextColor.WHITE));
+        p.sendMessage(Component.text("  "+location(l.source())+" -> "+location(l.destination()),NamedTextColor.GRAY));
     }
+
     private static String label(Endpoint e){return e.label()!=null?e.label():e.type().name().toLowerCase(Locale.ROOT);}
     private static String location(Endpoint e){return e.world()==null?label(e):e.world()+" "+e.x()+" "+e.y()+" "+e.z();}
     public static String rollbackId(UUID tx){return "#"+tx.toString().replace("-","").substring(0,5).toUpperCase(Locale.ROOT);}
