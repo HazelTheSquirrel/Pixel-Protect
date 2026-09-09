@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** CoreProtect-compatible selector grammar with strict validation. */
+/** Pixel-Protect selector grammar with strict validation. */
 public final class SelectorParser {
     private SelectorParser() {}
 
