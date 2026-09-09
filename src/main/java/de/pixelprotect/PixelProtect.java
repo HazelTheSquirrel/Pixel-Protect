@@ -17,56 +17,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.nio.file.Path;
 
 public final class PixelProtect extends JavaPlugin {
-    private DatabaseManager database;
-    private AsyncLogQueue queue;
-
-    @Override
-    public void onEnable() {
-        saveDefaultConfig();
-        try {
-            String storageMode = getConfig().getString("storage.mode", "local");
-            boolean fallbackToLocal = getConfig().getBoolean("storage.fallback-to-local", true);
-            database = new DatabaseManager(
-                    Path.of(getDataFolder().getPath(), "logs"),
-                    storageMode,
-                    fallbackToLocal,
-                    getConfig().getString("mysql.host", "127.0.0.1"),
-                    getConfig().getInt("mysql.port", 3306),
-                    getConfig().getString("mysql.database", "pixelprotect"),
-                    getConfig().getString("mysql.username", "pixelprotect"),
-                    getConfig().getString("mysql.password", "change-me"),
-                    getConfig().getInt("mysql.pool-size", 8)
-            );
-            database.initialize();
-
-            queue = new AsyncLogQueue(database, getConfig().getInt("logging.queue-capacity", 100000),
-                    t -> getLogger().severe("Forensik-Logging fehlgeschlagen: " + t.getMessage()));
-
-            Gson gson = new GsonBuilder().disableHtmlEscaping().create();
-            ItemCodec codec = new ItemCodec(gson);
-            OwnershipService ownership = new OwnershipService(database, queue);
-            TransferService transfers = new TransferService(this, queue, ownership, codec);
-            WorldAuditService world = new WorldAuditService(this, queue, ownership, database);
-            InspectorService inspector = new InspectorService(this, database, codec);
-            RollbackService rollback = new RollbackService(this, database, codec);
-
-            getServer().getPluginManager().registerEvents(new ForensicListener(transfers, world, inspector), this);
-            getLifecycleManager().registerEventHandler(
-                    io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents.COMMANDS,
-                    event -> event.registrar().register("pp", new PixelProtectCommand(database, inspector, rollback))
-            );
-
-            getLogger().info("Pixel-Protect Forensik-System aktiviert. Speicher: " + (storageMode.equalsIgnoreCase("local") ? "lokale JSONL-Dateien" : "MySQL"));
-        } catch (Exception e) {
-            getLogger().severe("Pixel-Protect konnte nicht gestartet werden: " + e.getMessage());
-            if (database != null) database.close();
-            getServer().getPluginManager().disablePlugin(this);
-        }
-    }
-
-    @Override
-    public void onDisable() {
-        if (queue != null) queue.close();
-        if (database != null) database.close();
-    }
+    private DatabaseManager database;private AsyncLogQueue queue;
+    @Override public void onEnable(){saveDefaultConfig();try{String mode=getConfig().getString("storage.mode","local");database=new DatabaseManager(Path.of(getDataFolder().getPath(),"logs"),mode,getConfig().getBoolean("storage.fallback-to-local",true),getConfig().getString("mysql.host","127.0.0.1"),getConfig().getInt("mysql.port",3306),getConfig().getString("mysql.database","pixelprotect"),getConfig().getString("mysql.username","pixelprotect"),getConfig().getString("mysql.password","change-me"),getConfig().getInt("mysql.pool-size",8));database.initialize();queue=new AsyncLogQueue(database,getConfig().getInt("logging.queue-capacity",100000),t->getLogger().severe("Forensic logging failure: "+t));Gson gson=new GsonBuilder().disableHtmlEscaping().create();ItemCodec codec=new ItemCodec(gson);OwnershipService ownership=new OwnershipService(database,queue);TransferService transfers=new TransferService(this,database,queue,ownership,codec);WorldAuditService world=new WorldAuditService(this,database,queue,ownership);InspectorService inspector=new InspectorService(this,database,codec);RollbackService rollback=new RollbackService(this,database,codec);getServer().getPluginManager().registerEvents(new ForensicListener(transfers,world,inspector),this);getLifecycleManager().registerEventHandler(io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents.COMMANDS,e->e.registrar().register("pp",new PixelProtectCommand(database,inspector,rollback,queue)));getLogger().info("Pixel-Protect forensic system enabled.");}catch(Exception e){getLogger().severe("Pixel-Protect startup failed: "+e);if(queue!=null)try{queue.close();}catch(Exception ignored){}if(database!=null)database.close();getServer().getPluginManager().disablePlugin(this);}}
+    @Override public void onDisable(){if(queue!=null)try{queue.close();}catch(Exception e){getLogger().severe("Forensic queue shutdown failed: "+e);}if(database!=null)database.close();}
 }
