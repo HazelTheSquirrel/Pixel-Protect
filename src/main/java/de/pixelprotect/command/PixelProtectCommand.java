@@ -7,18 +7,23 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import de.pixelprotect.model.AuditEntry;
 import de.pixelprotect.model.AuditQuery;
 import de.pixelprotect.service.InspectService;
+import de.pixelprotect.service.InventoryDiffService;
 import de.pixelprotect.service.MessageService;
 import de.pixelprotect.service.RollbackService;
 import de.pixelprotect.storage.Database;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -27,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 
 public final class PixelProtectCommand {
     private static final int PAGE_SIZE = 25;
+    private static final int MAX_ITEMS_PER_ENTRY = 4;
     private final Plugin plugin;
     private final Database database;
     private final RollbackService rollback;
@@ -251,13 +257,109 @@ public final class PixelProtectCommand {
 
     private void sendLookup(CommandSender sender, PageResult result) {
         long pages = Math.max(1, (result.total() + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (result.entries().isEmpty()) { send(sender, "PixelProtect: Keine Änderungen im gewählten Bereich und Zeitraum gefunden."); return; }
-        StringBuilder message = new StringBuilder("PixelProtect: ").append(result.total()).append(" Treffer (Seite ").append(result.page()).append('/').append(pages).append(")");
-        for (AuditEntry entry : result.entries()) {
-            message.append("\n• ").append(actor(entry)).append(" – ").append(MessageService.action(entry.action())).append(" – ").append(MessageService.coordinates(entry)).append(" – ").append(MessageService.time(entry.time()));
+        if (result.entries().isEmpty()) {
+            send(sender, "PixelProtect: Keine Änderungen im gewählten Bereich und Zeitraum gefunden.");
+            return;
         }
-        if (result.page() < pages) message.append("\nNächste Seite: /pp lookup ").append(result.radius()).append(' ').append(result.hours()).append(" #page:").append(result.page() + 1);
-        send(sender, message.toString());
+
+        Component message = Component.text("----- PixelProtect Lookup Results -----", NamedTextColor.GOLD)
+                .append(Component.newline())
+                .append(Component.text(result.total() + " Treffer • Seite " + result.page() + "/" + pages, NamedTextColor.GRAY));
+
+        for (AuditEntry entry : result.entries()) {
+            message = message.append(Component.newline())
+                    .append(Component.text(timeAgo(entry.time()) + " – ", NamedTextColor.GRAY))
+                    .append(Component.text(actor(entry), NamedTextColor.AQUA))
+                    .append(Component.text(" ", NamedTextColor.GRAY))
+                    .append(actionLine(entry))
+                    .append(Component.newline())
+                    .append(Component.text("    ↳ ", NamedTextColor.DARK_GRAY))
+                    .append(Component.text(MessageService.coordinates(entry), NamedTextColor.GRAY))
+                    .append(Component.text(" (", NamedTextColor.DARK_GRAY))
+                    .append(Component.text(worldName(entry), NamedTextColor.GRAY))
+                    .append(Component.text(")", NamedTextColor.DARK_GRAY));
+        }
+
+        if (result.page() < pages) {
+            message = message.append(Component.newline())
+                    .append(Component.text("Nächste Seite: /pp lookup " + result.radius() + " " + result.hours() + " #page:" + (result.page() + 1), NamedTextColor.YELLOW));
+        }
+        send(sender, message);
+    }
+
+    private Component actionLine(AuditEntry entry) {
+        if (entry.action() == de.pixelprotect.model.ActionType.CONTAINER || entry.action() == de.pixelprotect.model.ActionType.INVENTORY
+                || entry.action() == de.pixelprotect.model.ActionType.CRAFT || entry.action() == de.pixelprotect.model.ActionType.TRADE) {
+            List<InventoryDiffService.ItemChange> changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
+            if (!changes.isEmpty()) return inventoryAction(changes);
+        }
+
+        if (entry.action() == de.pixelprotect.model.ActionType.BREAK || entry.action() == de.pixelprotect.model.ActionType.BLOCK_BREAK) {
+            return Component.text("removed x1 ", NamedTextColor.RED)
+                    .append(Component.text(humanBlock(entry.beforeData()), NamedTextColor.AQUA));
+        }
+        if (entry.action() == de.pixelprotect.model.ActionType.PLACE) {
+            return Component.text("placed x1 ", NamedTextColor.GREEN)
+                    .append(Component.text(humanBlock(entry.afterData()), NamedTextColor.AQUA));
+        }
+
+        Component result = Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE);
+        if (entry.details() != null && !entry.details().isBlank()) {
+            result = result.append(Component.text(" – " + compactDetails(entry.details()), NamedTextColor.GRAY));
+        }
+        return result;
+    }
+
+    private Component inventoryAction(List<InventoryDiffService.ItemChange> changes) {
+        Component result = Component.empty();
+        int shown = 0;
+        for (InventoryDiffService.ItemChange change : changes) {
+            if (shown > 0) result = result.append(Component.text(", ", NamedTextColor.DARK_GRAY));
+            String verb = change.removed() ? "removed " : "added ";
+            NamedTextColor verbColor = change.removed() ? NamedTextColor.RED : NamedTextColor.GREEN;
+            result = result.append(Component.text(verb + "x" + Math.abs(change.amount()) + " ", verbColor))
+                    .append(change.displayName());
+            shown++;
+            if (shown >= MAX_ITEMS_PER_ENTRY) {
+                if (changes.size() > shown) result = result.append(Component.text(" …", NamedTextColor.DARK_GRAY));
+                break;
+            }
+        }
+        return result;
+    }
+
+    private static String worldName(AuditEntry entry) {
+        World world = Bukkit.getWorld(entry.world());
+        return world == null ? entry.world().toString().substring(0, 8) : world.getName();
+    }
+
+    private static String humanBlock(String value) {
+        if (value == null || value.isBlank()) return "unknown";
+        int separator = value.indexOf('[');
+        String name = separator >= 0 ? value.substring(0, separator) : value;
+        if (name.startsWith("minecraft:")) name = name.substring("minecraft:".length());
+        return name.replace('_', ' ');
+    }
+
+    private static String compactDetails(String details) {
+        String value = details.replace('\n', ' ').replace('\r', ' ').trim();
+        return value.length() > 100 ? value.substring(0, 97) + "..." : value;
+    }
+
+    private static String timeAgo(long timestamp) {
+        long seconds = Math.max(0L, Duration.ofMillis(Math.max(0L, System.currentTimeMillis() - timestamp)).toSeconds());
+        if (seconds < 60) return seconds + "s ago";
+        long minutes = seconds / 60;
+        if (minutes < 60) return minutes + "m ago";
+        long hours = minutes / 60;
+        if (hours < 24) return hours + "h ago";
+        long days = hours / 24;
+        if (days < 7) return days + "d ago";
+        long weeks = days / 7;
+        if (weeks < 5) return weeks + "w ago";
+        long months = days / 30;
+        if (months < 12) return months + "mo ago";
+        return (days / 365) + "y ago";
     }
 
     private static String actor(AuditEntry entry) { return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName(); }
@@ -268,6 +370,14 @@ public final class PixelProtectCommand {
     private void send(CommandSender sender, String message) {
         if (sender instanceof Player player) player.getScheduler().run(plugin, task -> { if (player.isOnline()) player.sendPlainMessage(message); }, null);
         else Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendPlainMessage(message));
+    }
+
+    private void send(CommandSender sender, Component message) {
+        if (sender instanceof Player player) {
+            player.getScheduler().run(plugin, task -> { if (player.isOnline()) player.sendMessage(message); }, null);
+        } else {
+            Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendMessage(message));
+        }
     }
 
     private static String rootMessage(Throwable throwable) {
