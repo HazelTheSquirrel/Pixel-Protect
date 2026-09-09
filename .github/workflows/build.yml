@@ -33,7 +33,7 @@ jobs:
       - name: Build PixelProtect
         run: gradle clean build --no-daemon --stacktrace
 
-      - name: Verify source API boundaries
+      - name: Verify source API boundaries and project independence
         shell: bash
         run: |
           set -euo pipefail
@@ -49,7 +49,17 @@ jobs:
             exit 1
           fi
 
-          echo 'Source API boundary validation passed.'
+          if grep -RIniE --exclude-dir=.git 'coreprotect|playpro|parity' .; then
+            echo 'Third-party parity/source-reference material detected in the repository.'
+            exit 1
+          fi
+
+          if find src -type f -name 'plugin.yml' -print -quit | grep -q .; then
+            echo 'Legacy plugin.yml detected; PixelProtect must use paper-plugin.yml only.'
+            exit 1
+          fi
+
+          echo 'Source API boundary and project-independence validation passed.'
 
       - name: Verify plugin artifact
         shell: bash
@@ -59,6 +69,11 @@ jobs:
           test -f "$artifact"
           jar tf "$artifact" | grep -q '^paper-plugin.yml$'
           jar tf "$artifact" | grep -q '^de/pixelprotect/'
+
+          if jar tf "$artifact" | grep -q '^plugin.yml$'; then
+            echo 'Legacy plugin.yml found in artifact.'
+            exit 1
+          fi
 
           if unzip -p "$artifact" paper-plugin.yml | grep -Eq '^(commands:|.*[[:space:]]commands:)'; then
             echo 'Legacy paper-plugin.yml command declaration detected.'
