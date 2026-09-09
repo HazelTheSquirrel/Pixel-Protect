@@ -9,6 +9,8 @@ import de.pixelprotect.service.OwnershipService;
 import de.pixelprotect.service.RollbackService;
 import de.pixelprotect.service.TransferService;
 import de.pixelprotect.service.WorldForensicsService;
+import io.papermc.paper.command.brigadier.Commands;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -32,8 +34,8 @@ public final class PixelProtect extends JavaPlugin {
         WorldForensicsService world=new WorldForensicsService(queue);
         Bukkit.getPluginManager().registerEvents(new ForensicListener(world,transfer,inspector,ownership),this);
         PixelProtectCommand command=new PixelProtectCommand(inspector,rollback,queue);
-        if(getCommand("pp")!=null)getCommand("pp").setExecutor(command);
-        getLogger().info("Pixel-Protect forensic engine enabled. Storage="+(getConfig().getString("storage.mode","local")));
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS,event->{Commands commands=event.registrar();commands.register("pp","Pixel-Protect forensic commands",command);});
+        getLogger().info("Pixel-Protect forensic engine enabled. Storage="+getConfig().getString("storage.mode","local"));
     }
 
     @Override public void onDisable(){
