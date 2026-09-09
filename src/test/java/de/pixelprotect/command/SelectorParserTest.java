@@ -37,7 +37,7 @@ class SelectorParserTest {
     }
 
     @Test
-    void parsesCoreProtectStyleActionPrefixes() {
+    void parsesActionPrefixes() {
         var placed = SelectorParser.parse(List.of("a:+block"), 5, 1, 128, 168);
         assertTrue(placed.errors().isEmpty());
         assertEquals(Set.of(ActionType.PLACE), placed.includeActions());
