@@ -4,7 +4,6 @@ storage:
   queue-capacity: 10000
   batch-size: 256
   flush-interval-millis: 250
-  overflow-spool: true
   mysql:
     jdbc-url: jdbc:mysql://127.0.0.1:3306/pixelprotect
     username: pixelprotect
@@ -31,23 +30,12 @@ logging:
   fluids: true
   growth: true
   entity-block-changes: true
-  entities: true
-  inventories: true
-  block-entities: true
-  player-activity: true
-  chat: true
-  commands: true
-  sessions: true
-  interactions: true
-  signs: true
-  entity-interactions: true
   entity-damage: true
 
 rollback:
   max-hours: 168
   max-radius: 128
   max-records: 100000
-  page-size: 50
   max-concurrent-jobs: 1
 
 diagnostics:
