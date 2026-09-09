@@ -26,7 +26,8 @@ import java.util.UUID;
 
 public final class InspectorService {
     private static final String SEP = "________________________________________________________________________________";
-    private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMANY).withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss", Locale.GERMANY)
+            .withZone(ZoneId.systemDefault());
     private final JavaPlugin plugin;
     private final DatabaseManager database;
     private final ItemCodec codec;
@@ -56,7 +57,9 @@ public final class InspectorService {
 
         event.setCancelled(true);
         String world = block.getWorld().getName();
-        int x = block.getX(), y = block.getY(), z = block.getZ();
+        int x = block.getX();
+        int y = block.getY();
+        int z = block.getZ();
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 Instant since = Instant.now().minus(Duration.ofDays(3650));
@@ -64,18 +67,18 @@ public final class InspectorService {
                 List<DatabaseManager.StoredBlock> blocks = database.findBlocks(world, x, y, z, 1.5, since, 50);
                 Bukkit.getScheduler().runTask(plugin, () -> send(player, transfers, blocks, world, x, y, z));
             } catch (Exception exception) {
-                Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(Component.text("Pixel-Protect: Forensik-Abfrage fehlgeschlagen: " + exception.getMessage(), NamedTextColor.RED)));
+                Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(
+                        Component.text("Pixel-Protect: Forensik-Abfrage fehlgeschlagen: " + exception.getMessage(), NamedTextColor.RED)));
             }
         });
     }
 
-    private void send(Player player, List<DatabaseManager.StoredTransfer> transfers, List<DatabaseManager.StoredBlock> blocks, String world, int x, int y, int z) {
+    private void send(Player player, List<DatabaseManager.StoredTransfer> transfers,
+                      List<DatabaseManager.StoredBlock> blocks, String world, int x, int y, int z) {
         if (!player.isOnline()) return;
 
-        player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-        player.sendMessage(Component.text("Pixel-Protect • " + world + " • X: " + x + " Y: " + y + " Z: " + z, NamedTextColor.GRAY));
-
         if (transfers.isEmpty() && blocks.isEmpty()) {
+            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
             player.sendMessage(Component.text("Keine protokollierten Ereignisse gefunden.", NamedTextColor.YELLOW));
             player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
             return;
@@ -85,12 +88,15 @@ public final class InspectorService {
         for (DatabaseManager.StoredTransfer transfer : transfers) {
             grouped.computeIfAbsent(transfer.transactionId(), ignored -> new ArrayList<>()).add(transfer);
         }
+
         for (List<DatabaseManager.StoredTransfer> group : grouped.values()) {
+            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
             player.sendMessage(formatTransferGroup(group));
             player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
         }
 
         for (DatabaseManager.StoredBlock block : blocks) {
+            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
             player.sendMessage(formatBlock(block));
             player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
         }
@@ -98,81 +104,137 @@ public final class InspectorService {
 
     public Component formatTransferGroup(List<DatabaseManager.StoredTransfer> transfers) {
         if (transfers.isEmpty()) return Component.empty();
+
         DatabaseManager.StoredTransfer first = transfers.getFirst();
         String actor = first.actorName() == null ? "Unbekannt" : first.actorName();
         boolean playerPut = first.source().type() == EndpointType.PLAYER && first.destination().type() != EndpointType.PLAYER;
         boolean playerTake = first.destination().type() == EndpointType.PLAYER && first.source().type() != EndpointType.PLAYER;
 
-        Component items = Component.empty();
-        for (int i = 0; i < transfers.size(); i++) {
-            if (i > 0) items = items.append(Component.text(", ", NamedTextColor.GRAY));
-            DatabaseManager.StoredTransfer transfer = transfers.get(i);
-            items = items.append(Component.text(transfer.amount() + "x ", playerTake ? NamedTextColor.RED : NamedTextColor.GREEN))
-                    .append(itemName(transfer));
+        if (playerPut || playerTake) {
+            return formatPlayerTransferGroup(actor, transfers, first, playerPut);
         }
+        return formatAutomatedTransferGroup(transfers, first);
+    }
 
-        Component message;
-        if (playerPut) {
-            message = Component.text(actor, NamedTextColor.GOLD)
-                    .append(Component.text(" hat ", NamedTextColor.WHITE))
-                    .append(items)
-                    .append(Component.text(" in " + first.destination().label() + " gelegt.", NamedTextColor.WHITE));
-        } else if (playerTake) {
-            message = Component.text(actor, NamedTextColor.GOLD)
-                    .append(Component.text(" hat ", NamedTextColor.WHITE))
-                    .append(items)
-                    .append(Component.text(" aus " + first.source().label() + " entnommen.", NamedTextColor.WHITE));
-        } else {
-            message = Component.text("Automatisch: ", NamedTextColor.YELLOW)
-                    .append(items)
-                    .append(Component.text(" von " + first.source().label() + " nach " + first.destination().label() + " transportiert.", NamedTextColor.WHITE));
-            if (first.attributionName() != null) {
-                message = message.append(Component.text(" Transportsystem von ", NamedTextColor.GRAY))
-                        .append(Component.text(first.attributionName(), NamedTextColor.GOLD));
+    private Component formatPlayerTransferGroup(String actor,
+                                                 List<DatabaseManager.StoredTransfer> transfers,
+                                                 DatabaseManager.StoredTransfer first,
+                                                 boolean firstIsPut) {
+        List<DatabaseManager.StoredTransfer> put = new ArrayList<>();
+        List<DatabaseManager.StoredTransfer> take = new ArrayList<>();
+
+        for (DatabaseManager.StoredTransfer transfer : transfers) {
+            if (transfer.source().type() == EndpointType.PLAYER && transfer.destination().type() != EndpointType.PLAYER) {
+                put.add(transfer);
+            } else if (transfer.destination().type() == EndpointType.PLAYER && transfer.source().type() != EndpointType.PLAYER) {
+                take.add(transfer);
             }
         }
 
-        return message
-                .append(Component.text("\nZeit: ", NamedTextColor.GRAY))
-                .append(Component.text(FORMAT.format(first.timestamp()), NamedTextColor.WHITE))
-                .append(Component.text("\nQuelle: ", NamedTextColor.GRAY))
-                .append(Component.text(endpoint(first.source()), NamedTextColor.WHITE))
-                .append(Component.text("\nZiel: ", NamedTextColor.GRAY))
-                .append(Component.text(endpoint(first.destination()), NamedTextColor.WHITE))
-                .append(Component.text("\nRollback-ID: ", NamedTextColor.GRAY))
-                .append(Component.text(first.transactionId().toString(), NamedTextColor.YELLOW));
+        Component message = Component.text(actor, NamedTextColor.GOLD)
+                .append(Component.text(" hat ", NamedTextColor.WHITE));
+
+        if (!put.isEmpty()) {
+            message = message.append(formatItems(put, NamedTextColor.GREEN))
+                    .append(Component.text(" in " + first.destination().label() + " gelegt", NamedTextColor.WHITE));
+        }
+
+        if (!take.isEmpty()) {
+            if (!put.isEmpty()) {
+                message = message.append(Component.text(",", NamedTextColor.WHITE))
+                        .append(Component.text("\nsowie ", NamedTextColor.WHITE));
+            }
+            message = message.append(formatItems(take, NamedTextColor.RED))
+                    .append(Component.text(" aus " + firstSourceLabel(take, first) + " entnommen", NamedTextColor.WHITE));
+        }
+
+        message = message.append(Component.text(".", NamedTextColor.WHITE));
+        return appendTransferMetadata(message, first, containerEndpoint(put, take, first));
     }
 
-    private Component itemName(DatabaseManager.StoredTransfer transfer) {
+    private Component formatAutomatedTransferGroup(List<DatabaseManager.StoredTransfer> transfers,
+                                                    DatabaseManager.StoredTransfer first) {
+        Component message = Component.text("Automatisch: ", NamedTextColor.YELLOW)
+                .append(formatItems(transfers, NamedTextColor.GREEN))
+                .append(Component.text(" von " + first.source().label() + " nach " + first.destination().label() + " transportiert.", NamedTextColor.WHITE));
+        if (first.attributionName() != null) {
+            message = message.append(Component.text(" Transportsystem von ", NamedTextColor.GRAY))
+                    .append(Component.text(first.attributionName(), NamedTextColor.GOLD));
+        }
+        return appendTransferMetadata(message, first, first.destination());
+    }
+
+    private Component appendTransferMetadata(Component message,
+                                             DatabaseManager.StoredTransfer transfer,
+                                             Endpoint displayEndpoint) {
+        return message
+                .append(Component.text("\nZeit: ", NamedTextColor.GRAY))
+                .append(Component.text(FORMAT.format(transfer.timestamp()), NamedTextColor.WHITE))
+                .append(Component.text("\n" + endpointLabel(displayEndpoint) + ": ", NamedTextColor.GRAY))
+                .append(Component.text(coordinates(displayEndpoint), NamedTextColor.WHITE))
+                .append(Component.text("    Rollback-ID: ", NamedTextColor.GRAY))
+                .append(Component.text(rollbackId(transfer.transactionId()), NamedTextColor.YELLOW));
+    }
+
+    private Component formatItems(List<DatabaseManager.StoredTransfer> transfers, NamedTextColor color) {
+        Component items = Component.empty();
+        for (int i = 0; i < transfers.size(); i++) {
+            if (i > 0) items = items.append(Component.text(", ", NamedTextColor.WHITE));
+            DatabaseManager.StoredTransfer transfer = transfers.get(i);
+            items = items.append(Component.text(transfer.amount() + "x ", color))
+                    .append(itemName(transfer, color));
+        }
+        return items;
+    }
+
+    private Component itemName(DatabaseManager.StoredTransfer transfer, NamedTextColor color) {
         try {
             var stack = codec.decode(transfer.itemData());
-            return Component.translatable(stack.getType().getTranslationKey()).color(transferDirectionColor(transfer));
+            return Component.translatable(stack.getType().getTranslationKey()).color(color);
         } catch (RuntimeException exception) {
             String key = transfer.itemKey();
             String item = key.contains(":") ? key.substring(key.indexOf(':') + 1).split(":", 2)[0] : key;
-            return Component.text(item, transferDirectionColor(transfer));
+            return Component.text(item, color);
         }
     }
 
-    private NamedTextColor transferDirectionColor(DatabaseManager.StoredTransfer transfer) {
-        if (transfer.destination().type() == EndpointType.PLAYER) return NamedTextColor.RED;
-        if (transfer.source().type() == EndpointType.PLAYER) return NamedTextColor.GREEN;
-        return NamedTextColor.GREEN;
+    private static String firstSourceLabel(List<DatabaseManager.StoredTransfer> take,
+                                           DatabaseManager.StoredTransfer first) {
+        return take.isEmpty() ? first.source().label() : take.getFirst().source().label();
+    }
+
+    private static Endpoint containerEndpoint(List<DatabaseManager.StoredTransfer> put,
+                                              List<DatabaseManager.StoredTransfer> take,
+                                              DatabaseManager.StoredTransfer first) {
+        if (!put.isEmpty()) return put.getFirst().destination();
+        if (!take.isEmpty()) return take.getFirst().source();
+        return first.destination();
+    }
+
+    private static String endpointLabel(Endpoint endpoint) {
+        if (endpoint.type() == EndpointType.BLOCK_CONTAINER) return endpoint.label();
+        if (endpoint.type() == EndpointType.MINECART) return endpoint.label();
+        return "Ort";
+    }
+
+    private static String coordinates(Endpoint endpoint) {
+        if (endpoint.world() == null) return "unbekannt";
+        return "X " + endpoint.x() + " Y " + endpoint.y() + " Z " + endpoint.z();
+    }
+
+    private static String rollbackId(UUID transactionId) {
+        String raw = transactionId.toString().replace("-", "").toUpperCase(Locale.ROOT);
+        return "#" + raw.substring(0, 5);
     }
 
     public Component formatBlock(DatabaseManager.StoredBlock block) {
         return Component.text(block.playerName(), NamedTextColor.GOLD)
                 .append(Component.text(" hat Block ", NamedTextColor.WHITE))
                 .append(Component.text(block.action().toLowerCase(Locale.GERMANY), NamedTextColor.YELLOW))
-                .append(Component.text(" (" + block.blockType() + ") bei X: " + block.x() + " Y: " + block.y() + " Z: " + block.z(), NamedTextColor.WHITE))
+                .append(Component.text(" (" + block.blockType() + ") bei X: " + block.x() + " Y: " + block.y() + " Z: " + block.z() + ".", NamedTextColor.WHITE))
                 .append(Component.text("\nZeit: ", NamedTextColor.GRAY))
                 .append(Component.text(FORMAT.format(block.timestamp()), NamedTextColor.WHITE))
                 .append(Component.text("\nRollback-ID: ", NamedTextColor.GRAY))
-                .append(Component.text(block.transactionId().toString(), NamedTextColor.YELLOW));
-    }
-
-    private static String endpoint(Endpoint endpoint) {
-        if (endpoint.world() == null) return endpoint.label();
-        return endpoint.label() + " @ X: " + endpoint.x() + " Y: " + endpoint.y() + " Z: " + endpoint.z();
+                .append(Component.text(rollbackId(block.transactionId()), NamedTextColor.YELLOW));
     }
 }
