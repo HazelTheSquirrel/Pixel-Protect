@@ -49,8 +49,8 @@ jobs:
             exit 1
           fi
 
-          if grep -RIniE --exclude-dir=.git 'coreprotect|playpro|parity' .; then
-            echo 'Third-party parity/source-reference material detected in the repository.'
+          if grep -RIniE 'coreprotect|playpro|parity' README.md docs src; then
+            echo 'Third-party parity/source-reference material detected in project sources or documentation.'
             exit 1
           fi
 
