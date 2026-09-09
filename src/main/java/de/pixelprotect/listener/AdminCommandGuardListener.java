@@ -7,23 +7,14 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
-import org.bukkit.plugin.Plugin;
 
 /** Enforces the server-owner policy that PixelProtect commands are available only to OP players. */
 public final class AdminCommandGuardListener implements Listener {
-    private final Plugin plugin;
-
-    public AdminCommandGuardListener(Plugin plugin) {
-        this.plugin = plugin;
-        plugin.getServer().getPluginManager().registerEvents(this, plugin);
-    }
-
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
         final Player player = event.getPlayer();
         final String command = event.getMessage().trim();
-        if (!isPixelProtectCommand(command)) return;
-        if (player.isOp()) return;
+        if (!isPixelProtectCommand(command) || player.isOp()) return;
         event.setCancelled(true);
         player.sendMessage(Component.text("PixelProtect: Dieser Befehl ist ausschließlich für OP-Spieler verfügbar.", NamedTextColor.RED));
     }
