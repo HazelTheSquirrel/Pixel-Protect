@@ -2,19 +2,17 @@
 
 Pixel-Protect is a standalone, Paper 26.2-native forensic logging and anti-griefing platform. It records world changes, containers, player inventories, entities and player activity, then provides asynchronous inspection, lookup, conflict-safe rollback, restore and retention workflows.
 
-Pixel-Protect is an **independent project with its own architecture, data model, command model and implementation**. It is not a fork, port, compatibility layer or source-derived implementation of another audit plugin. The project is developed from its own requirements and uses only the public APIs and libraries explicitly declared by this repository.
+Pixel-Protect is an independent project with its own architecture, data model, command model and implementation. It uses only the public APIs and libraries explicitly declared by this repository.
 
 The project is deliberately independent of PixelRPG. The primary command is `/pixelprotect` and `/pp` is its short alias.
 
 ## Project principles
 
-Pixel-Protect is designed around a few hard boundaries:
-
-- **Independent implementation:** no source code, copied implementation details or proprietary assets from third-party audit plugins are used.
+- **Simple for players:** the inspector shows only the useful answer, not database or forensic internals.
+- **Independent implementation:** Pixel-Protect has its own data model and implementation.
 - **Public APIs only:** Paper APIs, Mojang mappings and explicitly declared public integration APIs are used; no CraftBukkit or versioned NMS internals.
 - **Forensic first:** historical records are immutable evidence, while live world state remains authoritative for conflict-safe recovery.
 - **Asynchronous by design:** database work and expensive analysis never run inside the event/region thread.
-- **Own data model:** Pixel-Protect's audit records, transaction model, rollback jobs, selectors and persistence schema are designed specifically for this project.
 
 ## Platform contract
 
@@ -35,110 +33,136 @@ No CraftBukkit packages, versioned NMS packages or legacy `plugin.yml` command r
 
 ## What is logged
 
-### World and block changes
+Pixel-Protect records player and environmental changes including block placement/breaking, explosions, TNT, fire, fluids, pistons, growth, entities, buckets, containers, inventories, automation, signs and other supported modern Paper mechanics. WorldEdit sessions are also captured when WorldEdit is installed.
 
-Pixel-Protect records player and environmental changes including:
-
-- block placement and breaking
-- explosions and TNT priming
-- fire and burning
-- fluids and liquid source attribution
-- piston movement
-- growth, spread, decay and modern block mechanics
-- entity-caused block changes
-- buckets and cauldrons
-- structure/portal and modern Paper block mechanics
-- signs and block-entity state
-- flower pots, campfires, lecterns, bookshelves and vault-related activity
-- WorldEdit edit sessions
-
-Each reversible block record can retain before/after `BlockData`, block-entity state, inventory snapshots where applicable, forensic details, transaction UUID and deterministic sequence number.
-
-### Containers and inventories
-
-Container transactions are recorded separately from player inventory transitions. The audit model can therefore answer both:
-
-- who moved an item through a chest/container
-- what changed in a player's own inventory
-
-Hopper, dropper, dispenser and crafter-style automation is correlated through the automation tracker where the event provides enough causal information.
-
-### Entities and items
-
-The forensic model covers entity spawn/removal/death/damage, projectiles, dropped items, pickup/despawn events and player-caused entity activity. Entity snapshots retain public Paper state plus causal metadata without relying on CraftBukkit or versioned NMS internals.
-
-### Player activity
-
-Pixel-Protect records sessions, world changes, commands, chat, interactions, entity interactions, sign edits and related player activity. Activity records are intentionally not treated as block rollback transitions.
-
-## WorldEdit integration
-
-WorldEdit is optional. When installed, Pixel-Protect registers a public WorldEdit `EditSessionEvent` extent wrapper at the history stage. The wrapper captures successful block transitions, attributes them to the WorldEdit actor, groups the edit session under a transaction UUID and sends the resulting records through the normal Pixel-Protect audit queue.
-
-The integration is compile-time optional and is not shaded into Pixel-Protect. This keeps the standalone plugin usable when WorldEdit is absent while providing the same forensic path when WorldEdit is installed.
-
-The extent-level integration can also observe WorldEdit-based asynchronous editing stacks that preserve the public WorldEdit edit-session event path, subject to the integration behavior of the installed editing stack.
+Container transactions retain before/after inventory snapshots. This makes it possible to answer the important question directly: **who put what in, and who took what out?**
 
 ## Inspector
 
+Use:
+
 ```text
-/pixelprotect inspect
 /pp inspect
 ```
 
-Inspector mode is player-local. Left- and right-clicking a block captures only the immutable location required for the query. The database lookup is performed asynchronously and the result is returned through the appropriate Paper scheduler.
+Then **right-click the block** you want to check. Pixel-Protect deliberately gives you **one compact chat message for that block**. It does not print UUIDs, transaction IDs, database details or a technical audit dump.
 
-Inspector output includes the actor, UUID, action, timestamp, exact before/after block state, cause, transaction and available automation context. For blocks with inventories it now shows the exact occupied slots and item amounts **before** and **after** the recorded event, followed by an explicit net item change list. Breaking a container therefore shows exactly what was inside before it was removed; placing or changing a container shows what was present before and after the change.
+Examples:
+
+```text
+PixelProtect • 125 / 64 / -32
+Block: Chest
+Inhalt geändert:
+Rausgenommen von Alex: 32× Diamant, 12× Eisen
+Reingelegt von Steve: 64× Stein, 8× Gold
+```
+
+For a normal block:
+
+```text
+PixelProtect • 125 / 64 / -32
+Block: Oak Planks
+Platziert von: Steve • vor 2 Stunden
+```
+
+If the block was later broken, the inspector reports the latest relevant state:
+
+```text
+PixelProtect • 125 / 64 / -32
+Block: Air
+Abgebaut von: Alex • vor 15 Minuten
+```
+
+Inspector mode also prevents the right-click from accidentally opening a chest, pressing a button, placing an item or otherwise changing the world. Turn it off with `/pp inspect` again.
+
+The lookup itself remains asynchronous. The player only sees the final useful result.
 
 ## Lookup
 
+The simple forms are enough for normal administration:
+
 ```text
-/pixelprotect lookup <radius> <hours> [selectors...]
-/pp lookup <radius> <hours> [selectors...]
-/pixelprotect near [selectors...]
-/pp near [selectors...]
+/pp lookup
+/pp lookup <Radius>
+/pp lookup <Radius> <Stunden>
+/pp near
+/pp log <Radius> <Stunden>
 ```
 
-Supported selectors include:
+Advanced filters are still available when needed:
 
-| Selector | Purpose |
-|---|---|
-| `u:<user>` | Restrict by actor |
-| `t:<duration>` | Restrict by time |
-| `r:<radius>` | Radius restriction |
-| `w:<world>` | World restriction |
-| `c:x,y,z` | Exact center coordinate |
-| `ch:x,z` | Chunk center |
-| `a:<action>` | Include an action group/type |
-| `a:+block` | Placement only |
-| `a:-block` | Breaking only |
-| `i:<blocks>` | Include block types |
-| `e:<blocks>` | Exclude block types |
-| `#page:n` | Select result page |
-| `#count` | Return only the matching count |
-| `#preview` | Preview a rollback |
-| `#verbose` | Verbose operation output |
-| `#silent` | Minimal operation output |
+```text
+u:<Spieler>       Spieler
+ t:<Dauer>        Zeitfenster
+r:<Radius>        Radius
+w:<Welt>          Welt
+c:x,y,z           Mittelpunkt
+ch:x,z            Chunk
+ a:<Aktion>       Aktion
+ a:+block         nur Platzieren
+ a:-block         nur Abbauen
+i:<Block>         Block einschließen
+e:<Block>         Block ausschließen
+#page:n           Seite
+#count            nur Anzahl
+```
 
-Durations support seconds, minutes, hours, days, weeks and decimal values such as `2.5h`.
+Durations support `30s`, `30m`, `12h`, `7d`, `1w` and decimal values such as `2.5h`.
+
+`/pp log` is simply a short alias for `/pp lookup`.
 
 ## Rollback and restore
 
+The common commands are:
+
 ```text
-/pp rollback <radius> <hours> [selectors...]
-/pp rollback status <job>
-/pp rollback cancel <job>
-/pp restore <job>
-/pp undo <job>
+/pp rollback
+/pp rollback <Radius>
+/pp rollback <Radius> <Stunden>
+/pp rollback <Radius> <Stunden> #preview
+/pp rollback status <Auftrag>
+/pp rollback cancel <Auftrag>
+/pp restore <Auftrag>
+/pp undo <Auftrag>
 ```
 
-Rollback is a persisted asynchronous recovery job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler.
+A rollback is a persisted asynchronous recovery job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler. Before a mutation is applied, the live post-state is checked against the recorded state so newer changes are not silently overwritten.
 
-Before a mutation is applied, Pixel-Protect checks the live post-state against the state recorded by the audit entry. If another change has already altered that location, the historical mutation is skipped rather than overwriting newer world state.
+`/pp restore <Auftrag>` and `/pp undo <Auftrag>` apply the inverse transition of a completed rollback job.
 
-Rollback jobs retain processed/applied/skipped counters and can be restored through their inverse transition. Jobs that were running during a server restart are marked failed instead of being silently reported as successful.
+Player inventory records are deliberately excluded from block rollback. Inventory history remains available for forensic lookup.
 
-Player `INVENTORY` records are deliberately excluded from block rollback. Inventory history remains available for forensic lookup, preventing a world rollback from replacing a player's current inventory.
+## Commands
+
+```text
+/pp                         help
+/pp help                    help
+/pp version                 version
+/pp status                  storage/runtime status
+/pp inspect                 inspector on/off
+/pp check                   inspector on/off alias
+/pp lookup [Radius] [Std]   history lookup
+/pp log [Radius] [Std]      lookup alias
+/pp near                    lookup around you
+/pp rollback [Radius] [Std] rollback
+/pp rollback status <ID>   job status
+/pp rollback cancel <ID>   cancel job
+/pp restore <ID>            restore/invert a job
+/pp undo <ID>               restore/invert alias
+/pp purge <Tage>            delete old history
+```
+
+The command tree is registered through the modern Paper lifecycle command API. There is no legacy `plugin.yml` command registration.
+
+Permissions:
+
+```text
+pixelprotect.status
+pixelprotect.inspect
+pixelprotect.lookup
+pixelprotect.rollback
+pixelprotect.purge
+```
 
 ## Storage and durability
 
@@ -153,37 +177,7 @@ The hot event path is bounded and non-blocking:
 
 SQLite uses WAL mode, foreign-key enforcement and a busy timeout. MySQL/MariaDB uses HikariCP with a configurable pool.
 
-The current schema is **version 8** and is migrated automatically on startup. The schema contains the audit history, rollback jobs, rollback job entries, restore jobs, entity audit records, inventory audit records, transaction sequencing and forensic details.
-
-## Commands
-
-```text
-/pixelprotect
-/pp
-/pixelprotect help
-/pp help
-/pixelprotect version
-/pixelprotect status
-/pixelprotect inspect
-/pixelprotect lookup <radius> <hours> [selectors...]
-/pixelprotect near [selectors...]
-/pixelprotect rollback <radius> <hours> [selectors...]
-/pixelprotect rollback status <job>
-/pixelprotect rollback cancel <job>
-/pixelprotect restore <job>
-/pixelprotect undo <job>
-/pixelprotect purge <days>
-```
-
-Permissions currently exposed by the command tree are:
-
-```text
-pixelprotect.status
-pixelprotect.inspect
-pixelprotect.lookup
-pixelprotect.rollback
-pixelprotect.purge
-```
+The current schema is version 8 and is migrated automatically on startup. It contains audit history, rollback jobs, rollback job entries, restore jobs, entity audit records, inventory audit records, transaction sequencing and forensic details.
 
 ## Configuration
 
@@ -198,7 +192,7 @@ storage:
   flush-interval-millis: 250
 ```
 
-MySQL/MariaDB can be selected with `storage.backend` and the `storage.mysql.*` settings. World logging can be restricted through `worlds.include` and `worlds.exclude`. Retention and diagnostic intervals are configurable without changing the logging architecture.
+MySQL/MariaDB can be selected with `storage.backend` and the `storage.mysql.*` settings. World logging can be restricted through `worlds.include` and `worlds.exclude`. Retention and diagnostic intervals are configurable.
 
 ## Build and verification
 
@@ -212,20 +206,8 @@ The shaded release artifact is:
 build/libs/PixelProtect.jar
 ```
 
-The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, project independence, legacy descriptor absence and shaded artifact structure. CI intentionally does not download or boot a Paper server; runtime server provisioning belongs to the deployment environment rather than the plugin build pipeline.
+The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, project independence, legacy descriptor absence and shaded artifact structure. CI intentionally does not download or boot a Paper server; runtime server provisioning belongs to the deployment environment.
 
 ## Architecture
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the threading, persistence and rollback model.
-
-## Project identity
-
-Pixel-Protect is intended to stand on its own as an independent Minecraft forensic and recovery system. Similarities in broad functionality are a consequence of solving the same general server-administration problem; the implementation, internal abstractions, persistence model and project documentation are maintained independently.
-
-For contributors, the rule is simple: **do not copy source code, implementation-specific text, proprietary assets or non-public material from other projects into Pixel-Protect.** When researching a capability, derive the requirement independently and implement it against the current Paper/WorldEdit public APIs and Pixel-Protect's own architecture.
-
-## References
-
-- [Paper](https://papermc.io/)
-- [WorldEdit](https://github.com/EngineHub/WorldEdit)
-- [WorldEdit edit-session API](https://worldedit.enginehub.org/en/7.3.19/api/concepts/edit-sessions/)
+See `docs/ARCHITECTURE.md` for the threading, persistence and rollback model.
