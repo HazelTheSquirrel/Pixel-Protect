@@ -71,7 +71,11 @@ public final class DatabaseManager implements AutoCloseable {
             if (!fallbackToLocal) throw failure instanceof SQLException sql ? sql : new SQLException(failure);
             if (dataSource != null) dataSource.close();
             dataSource = null;
-            initializeLocal();
+            try {
+                initializeLocal();
+            } catch (IOException localFailure) {
+                throw new SQLException("Lokale Pixel-Protect-Speicherinitialisierung fehlgeschlagen.", localFailure);
+            }
         }
     }
 
