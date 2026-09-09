@@ -65,9 +65,7 @@ public final class PixelProtectCommand {
                 .then(restoreCommand("undo"))
                 .then(Commands.literal("purge").requires(s -> s.getSender().hasPermission("pixelprotect.purge"))
                         .then(Commands.argument("days", IntegerArgumentType.integer(1, 3650))
-                                .executes(c -> purge(c.getSource().getSender(), IntegerArgumentType.getInteger(c, "days")))))
-                .then(Commands.literal("reload").requires(s -> s.getSender().hasPermission("pixelprotect.status"))
-                        .executes(c -> message(c.getSource().getSender(), "PixelProtect: Die Konfiguration wird beim nächsten Serverstart übernommen.")));
+                                .executes(c -> purge(c.getSource().getSender(), IntegerArgumentType.getInteger(c, "days")))));
     }
 
     private LiteralArgumentBuilder<CommandSourceStack> lookupCommand(String name) {
