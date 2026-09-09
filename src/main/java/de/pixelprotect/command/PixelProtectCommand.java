@@ -130,14 +130,14 @@ public final class PixelProtectCommand {
 
     private int lookup(CommandSourceStack source, int defaultRadius, int defaultHours, String raw) {
         var parsed = SelectorParser.parse(tokens(raw), defaultRadius, defaultHours, maxRadius, maxHours);
-        if (!parsed.errors().isEmpty()) return sendErrors(source.getSource().getSender(), parsed.errors());
+        if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
         Location location = resolveLocation(source, parsed);
-        if (location == null) return message(source.getSource().getSender(), "PixelProtect: Standort oder Welt konnte nicht ermittelt werden.");
+        if (location == null) return message(source.getSender(), "PixelProtect: Standort oder Welt konnte nicht ermittelt werden.");
         final AuditQuery query;
         try {
             query = query(location, parsed);
         } catch (ArithmeticException e) {
-            return message(source.getSource().getSender(), "PixelProtect: Diese Seitennummer ist zu groß.");
+            return message(source.getSender(), "PixelProtect: Diese Seitennummer ist zu groß.");
         }
         CommandSender sender = source.getSender();
         if (parsed.countOnly()) {
@@ -145,8 +145,8 @@ public final class PixelProtectCommand {
                     .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         }
-        database.count(query).thenCombine(database.query(query), PageResult::new)
-                .thenAccept(result -> sendLookup(sender, result, parsed.page()))
+        database.count(query).thenCombine(database.query(query), (total, entries) -> new PageResult(total, entries, parsed.radius(), parsed.hours(), parsed.page()))
+                .thenAccept(result -> sendLookup(sender, result))
                 .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
         return Command.SINGLE_SUCCESS;
     }
@@ -288,18 +288,18 @@ public final class PixelProtectCommand {
         return message(sender, "PixelProtect 1.0.0");
     }
 
-    private void sendLookup(CommandSender sender, PageResult result, int page) {
+    private void sendLookup(CommandSender sender, PageResult result) {
         long pages = Math.max(1, (result.total() + PAGE_SIZE - 1) / PAGE_SIZE);
         if (result.entries().isEmpty()) {
             send(sender, "PixelProtect: Keine Änderungen im gewählten Bereich und Zeitraum gefunden.");
             return;
         }
-        StringBuilder message = new StringBuilder("PixelProtect: ").append(result.total()).append(" Treffer (Seite ").append(page).append('/').append(pages).append(")");
+        StringBuilder message = new StringBuilder("PixelProtect: ").append(result.total()).append(" Treffer (Seite ").append(result.page()).append('/').append(pages).append(")");
         for (AuditEntry entry : result.entries()) {
             message.append("\n• ").append(actor(entry)).append(" – ").append(MessageService.action(entry.action()))
                     .append(" – ").append(MessageService.coordinates(entry)).append(" – ").append(MessageService.time(entry.time()));
         }
-        if (page < pages) message.append("\nNächste Seite: /pp lookup ").append(result.radius()).append(' ').append(result.hours()).append(" #page:").append(page + 1);
+        if (result.page() < pages) message.append("\nNächste Seite: /pp lookup ").append(result.radius()).append(' ').append(result.hours()).append(" #page:").append(result.page() + 1);
         send(sender, message.toString());
     }
 
@@ -337,8 +337,5 @@ public final class PixelProtectCommand {
         return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
     }
 
-    private record PageResult(long total, List<AuditEntry> entries) {
-        int radius() { return entries.isEmpty() ? 5 : 0; }
-        int hours() { return 1; }
-    }
+    private record PageResult(long total, List<AuditEntry> entries, int radius, int hours, int page) {}
 }
