@@ -4,7 +4,7 @@ Pixel-Protect is a standalone, Paper 26.2-native forensic logging and anti-grief
 
 Pixel-Protect is an **independent project with its own architecture, data model, command model and implementation**. It is not a fork, port, compatibility layer or source-derived implementation of another audit plugin. The project is developed from its own requirements and uses only the public APIs and libraries explicitly declared by this repository.
 
-The project is deliberately independent of PixelRPG and uses `/pixelprotect` as its only command root.
+The project is deliberately independent of PixelRPG. The primary command is `/pixelprotect` and `/pp` is its short alias.
 
 ## Project principles
 
@@ -25,7 +25,7 @@ Pixel-Protect is designed around a few hard boundaries:
 | Java | 25 |
 | Mappings | Mojang mappings through Paperweight |
 | Plugin descriptor | `paper-plugin.yml` |
-| Command root | `/pixelprotect` only |
+| Command root | `/pixelprotect` with `/pp` alias |
 | Default database | SQLite |
 | External database | MySQL / MariaDB via HikariCP + Connector/J |
 | Optional integration | WorldEdit 7.4.4 |
@@ -83,17 +83,20 @@ The extent-level integration can also observe WorldEdit-based asynchronous editi
 
 ```text
 /pixelprotect inspect
+/pp inspect
 ```
 
 Inspector mode is player-local. Left- and right-clicking a block captures only the immutable location required for the query. The database lookup is performed asynchronously and the result is returned through the appropriate Paper scheduler.
 
-Inspector output can include actor, action, timestamp, coordinates, inventory deltas and available automation context.
+Inspector output includes the actor, UUID, action, timestamp, exact before/after block state, cause, transaction and available automation context. For blocks with inventories it now shows the exact occupied slots and item amounts **before** and **after** the recorded event, followed by an explicit net item change list. Breaking a container therefore shows exactly what was inside before it was removed; placing or changing a container shows what was present before and after the change.
 
 ## Lookup
 
 ```text
 /pixelprotect lookup <radius> <hours> [selectors...]
+/pp lookup <radius> <hours> [selectors...]
 /pixelprotect near [selectors...]
+/pp near [selectors...]
 ```
 
 Supported selectors include:
@@ -122,11 +125,11 @@ Durations support seconds, minutes, hours, days, weeks and decimal values such a
 ## Rollback and restore
 
 ```text
-/pixelprotect rollback <radius> <hours> [selectors...]
-/pixelprotect rollback status <job>
-/pixelprotect rollback cancel <job>
-/pixelprotect restore <job>
-/pixelprotect undo <job>
+/pp rollback <radius> <hours> [selectors...]
+/pp rollback status <job>
+/pp rollback cancel <job>
+/pp restore <job>
+/pp undo <job>
 ```
 
 Rollback is a persisted asynchronous recovery job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler.
@@ -156,7 +159,9 @@ The current schema is **version 8** and is migrated automatically on startup. Th
 
 ```text
 /pixelprotect
+/pp
 /pixelprotect help
+/pp help
 /pixelprotect version
 /pixelprotect status
 /pixelprotect inspect
@@ -207,7 +212,7 @@ The shaded release artifact is:
 build/libs/PixelProtect.jar
 ```
 
-The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, shaded artifact structure, and performs a real Paper 26.2 build-121 startup smoke test with the assembled plugin. The smoke test verifies that Paper reaches the ready state, PixelProtect reports successful enablement, and no PixelProtect startup error is emitted.
+The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, project independence, legacy descriptor absence and shaded artifact structure. CI intentionally does not download or boot a Paper server; runtime server provisioning belongs to the deployment environment rather than the plugin build pipeline.
 
 ## Architecture
 
