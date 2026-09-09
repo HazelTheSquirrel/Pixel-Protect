@@ -195,7 +195,7 @@ storage:
 
 MySQL/MariaDB can be selected with `storage.backend` and the `storage.mysql.*` settings. World logging can be restricted through `worlds.include` and `worlds.exclude`. Retention and diagnostic intervals are configurable without changing the logging architecture.
 
-## Build
+## Build and verification
 
 ```text
 gradle clean build
@@ -207,7 +207,7 @@ The shaded release artifact is:
 build/libs/PixelProtect.jar
 ```
 
-The build targets Java 25 and the Paper 26.2 build 121 development bundle. The CI pipeline validates the source API boundary and shaded artifact structure. The Paper server startup smoke test was intentionally removed from CI so the build does not depend on downloading/running a live server binary.
+The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, shaded artifact structure, and performs a real Paper 26.2 build-121 startup smoke test with the assembled plugin. The smoke test verifies that Paper reaches the ready state, PixelProtect reports successful enablement, and no PixelProtect startup error is emitted.
 
 ## Architecture
 
