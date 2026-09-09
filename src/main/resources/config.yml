@@ -1,3 +1,11 @@
+# Pixel-Protect storage
+# local = primary JSONL files, mysql = primary MySQL/MariaDB
+storage:
+  mode: local
+  fallback-to-local: true
+
+# MySQL/MariaDB is an optional secondary backend.
+# It is only contacted when storage.mode is mysql.
 mysql:
   host: 127.0.0.1
   port: 3306
@@ -5,5 +13,7 @@ mysql:
   username: pixelprotect
   password: change-me
   pool-size: 8
+
+# Asynchronous forensic logging queue.
 logging:
   queue-capacity: 100000
