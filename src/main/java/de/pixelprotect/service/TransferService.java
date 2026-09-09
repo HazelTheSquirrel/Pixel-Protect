@@ -19,45 +19,37 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class TransferService {
-    private final AsyncLogQueue queue;
-    private final OwnershipService ownership;
-    public TransferService(org.bukkit.plugin.java.JavaPlugin plugin, AsyncLogQueue queue, OwnershipService ownership){this.queue=queue;this.ownership=ownership;}
+    private final AsyncLogQueue queue; private final OwnershipService ownership;
+    public TransferService(org.bukkit.plugin.java.JavaPlugin plugin,AsyncLogQueue queue,OwnershipService ownership){this.queue=queue;this.ownership=ownership;}
 
-    public void playerClick(InventoryClickEvent event) {
-        if(event.isCancelled())return;
-        Player player=(Player)event.getWhoClicked(); Inventory clicked=event.getClickedInventory(); if(clicked==null)return;
-        Endpoint playerEndpoint=Endpoint.player(player.getUniqueId(),player.getName()); Endpoint clickedEndpoint=EndpointResolver.resolve(clicked);
-        if(clickedEndpoint==null||(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER&&clickedEndpoint.playerId().equals(player.getUniqueId())))return;
-        ItemStack current=event.getCurrentItem(),cursor=event.getCursor(); InventoryAction action=event.getAction();
-        ItemStack candidate=current!=null&&!current.isEmpty()?current.clone():cursor!=null&&!cursor.isEmpty()?cursor.clone():null;if(candidate==null)return;
+    public void playerClick(InventoryClickEvent event){
+        if(event.isCancelled())return;Player player=(Player)event.getWhoClicked();Inventory clicked=event.getClickedInventory();if(clicked==null)return;
+        Endpoint playerEndpoint=Endpoint.player(player.getUniqueId(),player.getName()),clickedEndpoint=EndpointResolver.resolve(clicked);if(clickedEndpoint==null)return;
+        ItemStack current=event.getCurrentItem(),cursor=event.getCursor();InventoryAction action=event.getAction();ItemStack candidate=current!=null&&!current.isEmpty()?current.clone():cursor!=null&&!cursor.isEmpty()?cursor.clone():null;if(candidate==null)return;
         int amount=movedAmount(action,current,cursor,clicked);if(amount<=0)return;
         Endpoint source,destination;
-        if(action==InventoryAction.MOVE_TO_OTHER_INVENTORY){if(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER)return;source=clickedEndpoint;destination=playerEndpoint;}
-        else if(isPickup(action)){source=clickedEndpoint;destination=playerEndpoint;}
-        else if(isPlace(action)){source=playerEndpoint;destination=clickedEndpoint;}
-        else if(action==InventoryAction.SWAP_WITH_CURSOR){source=playerEndpoint;destination=clickedEndpoint;}
-        else return;
+        if(action==InventoryAction.MOVE_TO_OTHER_INVENTORY){
+            if(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER){source=playerEndpoint;destination=EndpointResolver.resolve(event.getView().getTopInventory());}
+            else{source=clickedEndpoint;destination=playerEndpoint;}
+            if(destination==null)return;
+        }else if(isPickup(action)){if(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER)return;source=clickedEndpoint;destination=playerEndpoint;
+        }else if(isPlace(action)){if(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER)return;source=playerEndpoint;destination=clickedEndpoint;
+        }else if(action==InventoryAction.SWAP_WITH_CURSOR){if(clickedEndpoint.type()==de.pixelprotect.model.EndpointType.PLAYER)return;source=playerEndpoint;destination=clickedEndpoint;
+        }else return;
         submitPlayerTransfer(player,source,destination,candidate,amount,"PLAYER_TRANSFER");
     }
 
-    public void playerDrag(InventoryDragEvent event) {
-        if(event.isCancelled())return;
-        Player player=(Player)event.getWhoClicked();ItemStack oldCursor=event.getOldCursor();if(oldCursor==null||oldCursor.isEmpty()||event.getNewItems().isEmpty())return;
-        int amount=event.getNewItems().values().stream().filter(s->s!=null&&!s.isEmpty()).mapToInt(ItemStack::getAmount).sum();if(amount<=0)return;
-        Inventory target=null;for(Integer raw:event.getRawSlots()){Inventory inv=event.getView().getInventory(raw);if(inv!=null&&inv!=event.getView().getBottomInventory()){target=inv;break;}}
+    public void playerDrag(InventoryDragEvent event){
+        if(event.isCancelled())return;Player player=(Player)event.getWhoClicked();ItemStack oldCursor=event.getOldCursor();if(oldCursor==null||oldCursor.isEmpty()||event.getNewItems().isEmpty())return;
+        int amount=event.getNewItems().values().stream().filter(s->s!=null&&!s.isEmpty()).mapToInt(ItemStack::getAmount).sum();if(amount<=0)return;Inventory target=null;
+        for(Integer raw:event.getRawSlots()){Inventory inv=event.getView().getInventory(raw);if(inv!=null&&inv!=event.getView().getBottomInventory()){target=inv;break;}}
         if(target==null)return;Endpoint destination=EndpointResolver.resolve(target);if(destination==null||destination.type()==de.pixelprotect.model.EndpointType.PLAYER)return;
         submitPlayerTransfer(player,Endpoint.player(player.getUniqueId(),player.getName()),destination,oldCursor.clone(),amount,event.getType()==DragType.EVEN?"PLAYER_DRAG":"PLAYER_DRAG_SINGLE");
     }
 
-    public void automatedMove(InventoryMoveItemEvent event) {
-        if(event.isCancelled())return;ItemStack item=event.getItemStack();if(item==null||item.isEmpty())return;
-        Endpoint source=EndpointResolver.resolve(event.getSource()),destination=EndpointResolver.resolve(event.getDestination()),initiator=EndpointResolver.resolve(event.getInitiator());
-        if(source==null||destination==null)return;UUID tx=UUID.randomUUID();Instant now=Instant.now();
-        CompletableFuture.runAsync(()->{
-            Owner owner=initiator==null?null:ownership.load(initiator);if(owner==null)owner=ownership.load(source);if(owner==null)owner=ownership.load(destination);
-            UUID actorUuid=owner==null?null:owner.uuid();String actorName=owner==null?"UNKNOWN":owner.name();
-            queue.submitTransfer(new TransferLog(tx,now,actorUuid,actorName,actorUuid,actorName,source,destination,ItemCodec.key(item),ItemCodec.encode(item),item.getAmount(),"AUTOMATED_TRANSFER"));
-        });
+    public void automatedMove(InventoryMoveItemEvent event){
+        if(event.isCancelled())return;ItemStack item=event.getItemStack();if(item==null||item.isEmpty())return;Endpoint source=EndpointResolver.resolve(event.getSource()),destination=EndpointResolver.resolve(event.getDestination()),initiator=EndpointResolver.resolve(event.getInitiator());if(source==null||destination==null)return;
+        UUID tx=UUID.randomUUID();Instant now=Instant.now();CompletableFuture.runAsync(()->{Owner owner=initiator==null?null:ownership.load(initiator);if(owner==null)owner=ownership.load(source);if(owner==null)owner=ownership.load(destination);UUID actorUuid=owner==null?null:owner.uuid();String actorName=owner==null?"UNKNOWN":owner.name();queue.submitTransfer(new TransferLog(tx,now,actorUuid,actorName,actorUuid,actorName,source,destination,ItemCodec.key(item),ItemCodec.encode(item),item.getAmount(),"AUTOMATED_TRANSFER"));});
     }
 
     private void submitPlayerTransfer(Player player,Endpoint source,Endpoint destination,ItemStack item,int amount,String action){if(amount<=0)return;item.setAmount(Math.min(amount,item.getMaxStackSize()));queue.submitTransfer(new TransferLog(UUID.randomUUID(),Instant.now(),player.getUniqueId(),player.getName(),player.getUniqueId(),player.getName(),source,destination,ItemCodec.key(item),ItemCodec.encode(item),amount,action));}
