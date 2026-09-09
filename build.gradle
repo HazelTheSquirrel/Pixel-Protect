@@ -10,10 +10,13 @@ version = '1.0.0'
 repositories {
     mavenCentral()
     maven { name = 'papermc'; url = 'https://repo.papermc.io/repository/maven-public/' }
+    maven { name = 'enginehub'; url = 'https://maven.enginehub.org/repo/' }
 }
 
 dependencies {
     paperweight.paperDevBundle('26.2.build.121-stable')
+    compileOnly('com.sk89q.worldedit:worldedit-core:7.4.4')
+    compileOnly('com.sk89q.worldedit:worldedit-bukkit:7.4.4')
     implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'com.zaxxer:HikariCP:7.0.2'
