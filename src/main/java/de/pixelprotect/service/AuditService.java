@@ -80,8 +80,9 @@ public final class AuditService {
                                    String details, UUID transactionId, long sequence) {
         if (!isWorldIncluded(world) || beforeData == null || afterData == null || beforeData.equals(afterData)) return false;
         Actor effectiveActor = actor == null ? Actor.environment() : actor;
-        ActionType action = afterData.endsWith("minecraft:air") ? ActionType.BREAK
-                : beforeData.endsWith("minecraft:air") ? ActionType.PLACE : ActionType.WORLD_EDIT;
+        boolean beforeAir = beforeData.startsWith("minecraft:air");
+        boolean afterAir = afterData.startsWith("minecraft:air");
+        ActionType action = afterAir ? ActionType.BREAK : beforeAir ? ActionType.PLACE : ActionType.WORLD_EDIT;
         return database.record(new AuditEntry(0L, clock.millis(), world, x, y, z, effectiveActor.uuid(), effectiveActor.name(), action,
                 beforeData, afterData, null, null, null, null, details, transactionId, sequence));
     }
