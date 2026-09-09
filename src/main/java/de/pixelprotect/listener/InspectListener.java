@@ -9,8 +9,10 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.Event.Result;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.plugin.Plugin;
 
 import java.util.ArrayList;
@@ -18,10 +20,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Human-first inspector output: one short message containing only the information relevant to the clicked block. */
+/** Simple, safe inspector: one compact result per right-clicked block. */
 public final class InspectListener implements Listener {
-    private static final int MAX_HISTORY = 15;
-    private static final int MAX_INVENTORY_LINES = 8;
+    private static final int MAX_PLAYERS = 8;
+    private static final int MAX_ITEMS_PER_LINE = 4;
 
     private final Plugin plugin;
     private final InspectService inspect;
@@ -31,31 +33,34 @@ public final class InspectListener implements Listener {
         this.inspect = inspect;
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onInteract(org.bukkit.event.player.PlayerInteractEvent event) {
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInteract(PlayerInteractEvent event) {
         final var player = event.getPlayer();
-        if (!player.isOp()) {
+        if (!player.hasPermission("pixelprotect.inspect")) {
             inspect.disable(player);
             return;
         }
-        if (!inspect.isEnabled(player)) return;
-        if (event.getAction() != Action.LEFT_CLICK_BLOCK && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        if (!inspect.isEnabled(player) || event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+
         final var block = event.getClickedBlock();
         if (block == null) return;
+
+        // Inspector mode must never accidentally open a chest, press a button, place a block, etc.
+        event.setUseInteractedBlock(Result.DENY);
+        event.setUseItemInHand(Result.DENY);
 
         final int x = block.getX();
         final int y = block.getY();
         final int z = block.getZ();
-        final String world = block.getWorld().getName();
         final String currentBlock = block.getType().translationKey();
 
         inspect.lookup(block.getWorld().getUID(), x, y, z).thenAccept(entries -> player.getScheduler().run(plugin, task -> {
-            if (!player.isOnline() || !player.isOp() || !inspect.isEnabled(player)) return;
-            player.sendMessage(buildMessage(world, x, y, z, currentBlock, entries));
+            if (!player.isOnline() || !player.hasPermission("pixelprotect.inspect") || !inspect.isEnabled(player)) return;
+            player.sendMessage(buildMessage(x, y, z, currentBlock, entries));
         }, null));
     }
 
-    private static Component buildMessage(String world, int x, int y, int z, String currentBlock, List<AuditEntry> entries) {
+    private static Component buildMessage(int x, int y, int z, String currentBlock, List<AuditEntry> entries) {
         Component message = Component.text("PixelProtect", NamedTextColor.GOLD)
                 .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
                 .append(Component.text(MessageService.coordinates(x, y, z), NamedTextColor.GRAY))
@@ -68,52 +73,56 @@ public final class InspectListener implements Listener {
                     .append(Component.text("Keine Änderungen gefunden.", NamedTextColor.YELLOW));
         }
 
-        List<AuditEntry> blockChanges = entries.stream()
-                .filter(InspectListener::isBlockChange)
-                .toList();
-        List<AuditEntry> inventoryChanges = entries.stream()
-                .filter(InspectListener::isInventoryChange)
-                .toList();
+        List<AuditEntry> blockChanges = entries.stream().filter(InspectListener::isBlockChange).toList();
+        List<AuditEntry> inventoryChanges = entries.stream().filter(InspectListener::isInventoryChange).toList();
 
-        if (!blockChanges.isEmpty()) {
-            message = appendBlockHistory(message, blockChanges);
-        }
-
-        if (!inventoryChanges.isEmpty()) {
-            message = appendInventoryHistory(message, inventoryChanges);
-        }
+        if (!blockChanges.isEmpty()) message = appendBlockHistory(message, blockChanges);
+        if (!inventoryChanges.isEmpty()) message = appendInventoryHistory(message, inventoryChanges);
 
         if (blockChanges.isEmpty() && inventoryChanges.isEmpty()) {
             AuditEntry latest = entries.getFirst();
             message = message.append(Component.newline())
-                    .append(Component.text("Letzte Aktion: ", NamedTextColor.GRAY))
+                    .append(Component.text("Letzte Änderung: ", NamedTextColor.GRAY))
                     .append(Component.text(actionText(latest.action()), NamedTextColor.WHITE))
-                    .append(Component.text(" durch ", NamedTextColor.GRAY))
+                    .append(Component.text(" von ", NamedTextColor.GRAY))
                     .append(Component.text(actor(latest), NamedTextColor.YELLOW))
                     .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
                     .append(Component.text(MessageService.time(latest.time()), NamedTextColor.GRAY));
         }
-
         return message;
     }
 
     private static Component appendBlockHistory(Component base, List<AuditEntry> entries) {
         AuditEntry latestBreak = entries.stream().filter(InspectListener::isBreak).findFirst().orElse(null);
         AuditEntry latestPlace = entries.stream().filter(InspectListener::isPlace).findFirst().orElse(null);
+        AuditEntry latest = entries.getFirst();
 
         Component result = base.append(Component.newline());
-        if (latestPlace != null) {
+        if (latest.action() == ActionType.PLACE && latestPlace != null) {
             result = result.append(Component.text("Platziert von: ", NamedTextColor.GRAY))
                     .append(Component.text(actor(latestPlace), NamedTextColor.GREEN))
                     .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
                     .append(Component.text(MessageService.time(latestPlace.time()), NamedTextColor.GRAY));
-        }
-        if (latestBreak != null) {
-            result = result.append(Component.newline())
-                    .append(Component.text("Abgebaut von: ", NamedTextColor.GRAY))
-                    .append(Component.text(actor(latestBreak), NamedTextColor.RED))
+        } else if (latest.action() == ActionType.BREAK || latest.action() == ActionType.BLOCK_BREAK) {
+            AuditEntry breaker = latestBreak == null ? latest : latestBreak;
+            result = result.append(Component.text("Abgebaut von: ", NamedTextColor.GRAY))
+                    .append(Component.text(actor(breaker), NamedTextColor.RED))
                     .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
-                    .append(Component.text(MessageService.time(latestBreak.time()), NamedTextColor.GRAY));
+                    .append(Component.text(MessageService.time(breaker.time()), NamedTextColor.GRAY));
+        } else {
+            if (latestPlace != null) {
+                result = result.append(Component.text("Platziert von: ", NamedTextColor.GRAY))
+                        .append(Component.text(actor(latestPlace), NamedTextColor.GREEN))
+                        .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
+                        .append(Component.text(MessageService.time(latestPlace.time()), NamedTextColor.GRAY));
+            }
+            if (latestBreak != null) {
+                result = result.append(Component.newline())
+                        .append(Component.text("Abgebaut von: ", NamedTextColor.GRAY))
+                        .append(Component.text(actor(latestBreak), NamedTextColor.RED))
+                        .append(Component.text(" • ", NamedTextColor.DARK_GRAY))
+                        .append(Component.text(MessageService.time(latestBreak.time()), NamedTextColor.GRAY));
+            }
         }
         return result;
     }
@@ -130,35 +139,32 @@ public final class InspectListener implements Listener {
                 if (change.removed()) person.removed.add(change);
             }
         }
-
         if (byPlayer.isEmpty()) return base;
 
         Component result = base.append(Component.newline())
                 .append(Component.text("Inhalt geändert:", NamedTextColor.GOLD));
-        int lines = 0;
+        int players = 0;
         for (Map.Entry<String, PersonChanges> entry : byPlayer.entrySet()) {
-            if (lines >= MAX_INVENTORY_LINES) break;
+            if (players++ >= MAX_PLAYERS) break;
             PersonChanges changes = entry.getValue();
             if (!changes.removed.isEmpty()) {
                 result = result.append(Component.newline())
-                        .append(Component.text("  Rausgenommen von ", NamedTextColor.GRAY))
+                        .append(Component.text("Rausgenommen von ", NamedTextColor.GRAY))
                         .append(Component.text(entry.getKey(), NamedTextColor.RED))
                         .append(Component.text(": ", NamedTextColor.GRAY))
                         .append(itemSummary(changes.removed));
-                lines++;
             }
-            if (lines >= MAX_INVENTORY_LINES) break;
             if (!changes.added.isEmpty()) {
                 result = result.append(Component.newline())
-                        .append(Component.text("  Reingelegt von ", NamedTextColor.GRAY))
+                        .append(Component.text("Reingelegt von ", NamedTextColor.GRAY))
                         .append(Component.text(entry.getKey(), NamedTextColor.GREEN))
                         .append(Component.text(": ", NamedTextColor.GRAY))
                         .append(itemSummary(changes.added));
-                lines++;
             }
         }
-        if (byPlayer.size() > MAX_INVENTORY_LINES) {
-            result = result.append(Component.newline()).append(Component.text("  Weitere Änderungen vorhanden.", NamedTextColor.DARK_GRAY));
+        if (byPlayer.size() > MAX_PLAYERS) {
+            result = result.append(Component.newline())
+                    .append(Component.text("Weitere Änderungen vorhanden.", NamedTextColor.DARK_GRAY));
         }
         return result;
     }
@@ -170,7 +176,7 @@ public final class InspectListener implements Listener {
             if (shown++ > 0) result = result.append(Component.text(", ", NamedTextColor.DARK_GRAY));
             result = result.append(Component.text(Math.abs(change.amount()) + "× ", NamedTextColor.WHITE))
                     .append(change.displayName());
-            if (shown >= 4) {
+            if (shown >= MAX_ITEMS_PER_LINE) {
                 if (changes.size() > shown) result = result.append(Component.text(" …", NamedTextColor.DARK_GRAY));
                 break;
             }
