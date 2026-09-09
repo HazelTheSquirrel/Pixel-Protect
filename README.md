@@ -1,213 +1,294 @@
 # Pixel-Protect
 
-Pixel-Protect is a standalone, Paper 26.2-native forensic logging and anti-griefing platform. It records world changes, containers, player inventories, entities and player activity, then provides asynchronous inspection, lookup, conflict-safe rollback, restore and retention workflows.
+Pixel-Protect is a standalone forensic logging and anti-griefing plugin for **Paper 26.2**. The current implementation is intentionally focused: it records the information needed to reconstruct **who moved what, from where, to where, when, and through which transport system**, while also retaining block-change history for safe recovery.
 
-Pixel-Protect is an independent project with its own architecture, data model, command model and implementation. It uses only the public APIs and libraries explicitly declared by this repository.
+The project is independent of PixelRPG and does not depend on CoreProtect. It uses modern Paper APIs, Mojang mappings and Java 25.
 
-The project is deliberately independent of PixelRPG. The primary command is `/pixelprotect` and `/pp` is its short alias.
+## Current status
 
-## Project principles
+- **Platform:** Paper 26.2
+- **Paper Dev Bundle:** `26.2.build.121-stable`
+- **Java:** 25
+- **Mappings:** Mojang mappings through Paperweight
+- **Plugin descriptor:** `paper-plugin.yml`
+- **Storage:** local JSONL by default; optional MySQL/MariaDB backend
+- **Build:** CI green
+- **Legacy CraftBukkit / versioned NMS:** not used
 
-- **Simple for players:** the inspector shows only the useful answer, not database or forensic internals.
-- **Independent implementation:** Pixel-Protect has its own data model and implementation.
-- **Public APIs only:** Paper APIs, Mojang mappings and explicitly declared public integration APIs are used; no CraftBukkit or versioned NMS internals.
-- **Forensic first:** historical records are immutable evidence, while live world state remains authoritative for conflict-safe recovery.
-- **Asynchronous by design:** database work and expensive analysis never run inside the event/region thread.
+## What Pixel-Protect currently does
 
-## Platform contract
+Pixel-Protect is built around one forensic model:
 
-| Component | Version / contract |
-|---|---|
-| Minecraft server | Paper 26.2 |
-| Paper build target | 26.2.build.121-stable |
-| Java | 25 |
-| Mappings | Mojang mappings through Paperweight |
-| Plugin descriptor | `paper-plugin.yml` |
-| Command root | `/pixelprotect` with `/pp` alias |
-| Default database | SQLite |
-| External database | MySQL / MariaDB via HikariCP + Connector/J |
-| Optional integration | WorldEdit 7.4.4 |
-| Runtime dependencies | Gson 2.13.1, HikariCP 7.0.2, MySQL Connector/J 9.7.0 |
+**Actor → Transaction → Source → Item → Amount → Destination → Attribution → Chain → Restore**
 
-No CraftBukkit packages, versioned NMS packages or legacy `plugin.yml` command registration are used.
+The important result is that a log entry is not just “a chest changed”. It can describe the actual transfer:
 
-## What is logged
+```text
+Hazel hat 32 diamond vom Inventar in Kiste gelegt.
+Quelle: Spielerinventar
+Ziel: Kiste bei world 125 / 64 / -32
+Zeit: 09.09.2026 14:32:18
+```
 
-Pixel-Protect records player and environmental changes including block placement/breaking, explosions, TNT, fire, fluids, pistons, growth, entities, buckets, containers, inventories, automation, signs and other supported modern Paper mechanics. WorldEdit sessions are also captured when WorldEdit is installed.
+For automated transport the attribution follows the initiating transport endpoint where ownership is known:
 
-Container transactions retain before/after inventory snapshots. This makes it possible to answer the important question directly: **who put what in, and who took what out?**
+```text
+32 diamond wurden automatisch von Kiste A nach Kiste B transportiert.
+Transportsystem platziert von: Hazel
+```
+
+This is the core forensic purpose of the plugin: **not only what changed, but who caused or owned the transfer path.**
+
+## Logged transfer types
+
+The current focused implementation covers:
+
+- Player inventory → container
+- Container → player inventory
+- Container → container automation
+- Hopper / transport-chain movement through `InventoryMoveItemEvent`
+- Item pickup from the ground into a container
+- Player dropping items to the ground
+- Player picking items up from the ground
+- Inventory changes caused by normal player interaction, including stack movement and splitting/merging where the before/after state can be determined
+- Inventory minecarts and other supported inventory-holding entities
+
+For automated transfers, Pixel-Protect records the initiating endpoint and resolves its recorded placer/owner where possible. If no owner can be established, the attribution is explicitly reported as unknown rather than guessed.
+
+## Block and ownership logging
+
+The world audit records:
+
+- block placement
+- block breaking
+- inventory-holding entity placement
+- exact world and XYZ coordinates
+- block type
+- block state/data before and after the change
+- player attribution
+- transaction identity
+
+Container blocks and supported inventory entities are associated with their placer so later automated transfers can be attributed to the person who created the transport system.
 
 ## Inspector
 
-Use:
+Enable inspector mode with:
 
 ```text
-/pp inspect
+/pp inspector
 ```
 
-Then **right-click the block** you want to check. Pixel-Protect deliberately gives you **one compact chat message for that block**. It does not print UUIDs, transaction IDs, database details or a technical audit dump.
+`/pp inspect` is also available.
 
-Examples:
+While inspector mode is active, left- or right-clicking a block performs an **asynchronous forensic lookup** instead of opening or modifying the block.
+
+The lookup combines block history and transfer history around the clicked position. Results include, where available:
+
+- who performed the action
+- item and exact amount
+- source endpoint
+- destination endpoint
+- world and coordinates
+- timestamp using the server/JVM timezone
+- transport-system placer/owner
+- transaction ID
+- chain ID
+
+Every result is separated by:
 
 ```text
-PixelProtect • 125 / 64 / -32
-Block: Chest
-Inhalt geändert:
-Rausgenommen von Alex: 32× Diamant, 12× Eisen
-Reingelegt von Steve: 64× Stein, 8× Gold
+________________________________________________________________________________
 ```
 
-For a normal block:
-
-```text
-PixelProtect • 125 / 64 / -32
-Block: Oak Planks
-Platziert von: Steve • vor 2 Stunden
-```
-
-If the block was later broken, the inspector reports the latest relevant state:
-
-```text
-PixelProtect • 125 / 64 / -32
-Block: Air
-Abgebaut von: Alex • vor 15 Minuten
-```
-
-Inspector mode also prevents the right-click from accidentally opening a chest, pressing a button, placing an item or otherwise changing the world. Turn it off with `/pp inspect` again.
-
-The lookup itself remains asynchronous. The player only sees the final useful result.
+This keeps multiple forensic events visually distinct in chat.
 
 ## Lookup
 
-The simple forms are enough for normal administration:
+The current command set is intentionally small:
 
 ```text
-/pp lookup
-/pp lookup <Radius>
-/pp lookup <Radius> <Stunden>
-/pp near
-/pp log <Radius> <Stunden>
+/pp inspector
+/pp inspect
+/pp lookup [radius] [time]
+/pp rollback <radius> <time>
+/pp status
 ```
 
-Advanced filters are still available when needed:
+Supported duration formats include:
 
 ```text
-u:<Spieler>       Spieler
- t:<Dauer>        Zeitfenster
-r:<Radius>        Radius
-w:<Welt>          Welt
-c:x,y,z           Mittelpunkt
-ch:x,z            Chunk
- a:<Aktion>       Aktion
- a:+block         nur Platzieren
- a:-block         nur Abbauen
-i:<Block>         Block einschließen
-e:<Block>         Block ausschließen
-#page:n           Seite
-#count            nur Anzahl
+30s
+30m
+2h
+1d
+1w
 ```
 
-Durations support `30s`, `30m`, `12h`, `7d`, `1w` and decimal values such as `2.5h`.
+Lookup and database/file processing run asynchronously so the main server thread is not blocked by storage access.
 
-`/pp log` is simply a short alias for `/pp lookup`.
+## Rollback
 
-## Rollback and restore
+Rollback selection is performed asynchronously. The actual world mutations are scheduled back onto the appropriate Paper thread.
 
-The common commands are:
+The rollback engine processes matching block and transfer records in **one chronological reverse order**. This is important for cases such as a container being broken after items were moved: the inventory transition is reversed before the container state is removed/restored in the wrong phase.
+
+Transfer rollback is conservative:
+
+- it identifies the exact recorded item data
+- removes the recorded amount from the destination
+- restores it to the source
+- detects insufficient space or quantity instead of silently destroying unrelated items
+- records `ACTIVE`, `ROLLED_BACK`, `CONFLICT` or `ERROR` state
+
+Block rollback is also conflict-safe. A block is only reverted when its current live state still matches the recorded post-change state. Newer changes are therefore not blindly overwritten.
+
+Player inventory rollback requires the player inventory to be available; the implementation does not modify offline player-data files through unsafe server internals.
+
+## Storage
+
+### Local storage — default
+
+The default backend is **local JSONL**. It is append-oriented and avoids rewriting a complete history file for every event.
+
+The plugin creates:
 
 ```text
-/pp rollback
-/pp rollback <Radius>
-/pp rollback <Radius> <Stunden>
-/pp rollback <Radius> <Stunden> #preview
-/pp rollback status <Auftrag>
-/pp rollback cancel <Auftrag>
-/pp restore <Auftrag>
-/pp undo <Auftrag>
+plugins/Pixel-Protect/logs/
+├── transfer_logs.jsonl
+├── block_logs.jsonl
+└── endpoint_owners.jsonl
 ```
 
-A rollback is a persisted asynchronous recovery job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler. Before a mutation is applied, the live post-state is checked against the recorded state so newer changes are not silently overwritten.
+JSONL was chosen because forensic history is naturally append-heavy: one JSON record per line can be written without loading and rewriting the entire history on every event.
 
-`/pp restore <Auftrag>` and `/pp undo <Auftrag>` apply the inverse transition of a completed rollback job.
+### MySQL / MariaDB — optional
 
-Player inventory records are deliberately excluded from block rollback. Inventory history remains available for forensic lookup.
+MySQL/MariaDB remains available as an optional backend. HikariCP provides the connection pool and MySQL Connector/J provides the driver.
 
-## Commands
+The database schema contains the corresponding transfer, block and endpoint ownership records. Local storage can also be used as a fallback if the configured MySQL backend cannot be initialized.
 
-```text
-/pp                         help
-/pp help                    help
-/pp version                 version
-/pp status                  storage/runtime status
-/pp inspect                 inspector on/off
-/pp check                   inspector on/off alias
-/pp lookup [Radius] [Std]   history lookup
-/pp log [Radius] [Std]      lookup alias
-/pp near                    lookup around you
-/pp rollback [Radius] [Std] rollback
-/pp rollback status <ID>   job status
-/pp rollback cancel <ID>   cancel job
-/pp restore <ID>            restore/invert a job
-/pp undo <ID>               restore/invert alias
-/pp purge <Tage>            delete old history
-```
+## Asynchronous architecture
 
-The command tree is registered through the modern Paper lifecycle command API. There is no legacy `plugin.yml` command registration.
+The event path is designed around a bounded in-memory queue:
 
-Permissions:
+1. A Paper event captures the relevant immutable state.
+2. The record is submitted to the asynchronous logging queue.
+3. A dedicated worker performs persistence work away from the main event thread.
+4. Inspector and lookup queries execute asynchronously.
+5. Rollback selection executes asynchronously.
+6. Only the actual Minecraft world/inventory mutations return to Paper scheduling APIs.
 
-```text
-pixelprotect.status
-pixelprotect.inspect
-pixelprotect.lookup
-pixelprotect.rollback
-pixelprotect.purge
-```
+The default queue capacity is `100000` entries.
 
-## Storage and durability
-
-The hot event path is bounded and non-blocking:
-
-1. A Paper event captures immutable state.
-2. The record is offered to the bounded in-memory queue.
-3. A dedicated database worker batches writes.
-4. Saturated queues use the asynchronous overflow writer.
-5. Queries run asynchronously.
-6. Rollback world mutations return to Paper scheduling APIs.
-
-SQLite uses WAL mode, foreign-key enforcement and a busy timeout. MySQL/MariaDB uses HikariCP with a configurable pool.
-
-The current schema is version 8 and is migrated automatically on startup. It contains audit history, rollback jobs, rollback job entries, restore jobs, entity audit records, inventory audit records, transaction sequencing and forensic details.
+The architecture deliberately separates **forensic data collection** from **world mutation** so database/file operations do not become a source of normal gameplay lag.
 
 ## Configuration
 
-The default configuration uses SQLite:
+The current default configuration is:
 
 ```yaml
 storage:
-  backend: sqlite
-  file: pixelprotect.db
-  queue-capacity: 10000
-  batch-size: 256
-  flush-interval-millis: 250
+  mode: local
+  fallback-to-local: true
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  database: pixelprotect
+  username: pixelprotect
+  password: change-me
+  pool-size: 8
+
+logging:
+  queue-capacity: 100000
 ```
 
-MySQL/MariaDB can be selected with `storage.backend` and the `storage.mysql.*` settings. World logging can be restricted through `worlds.include` and `worlds.exclude`. Retention and diagnostic intervals are configurable.
+`storage.mode: local` is the recommended current default. Set it to `mysql` when MySQL/MariaDB should be the primary backend.
 
-## Build and verification
+## Commands and permission
+
+The plugin command root is `/pp`.
 
 ```text
-gradle clean build
+/pp inspector                 Toggle inspector mode
+/pp inspect                   Inspector alias
+/pp lookup [radius] [time]    Forensic history lookup
+/pp rollback <radius> <time>  Asynchronous rollback
+/pp status                    Runtime/storage status
 ```
 
-The shaded release artifact is:
+Administrative access uses:
+
+```text
+pixelprotect.admin
+```
+
+## Build
+
+Requirements:
+
+- Java 25
+- Gradle
+- Paperweight UserDev
+
+Build with:
+
+```text
+gradle clean build --no-daemon
+```
+
+The build uses:
+
+- `io.papermc.paperweight.userdev` `2.0.0-beta.21`
+- Shadow `9.6.1`
+- Gson `2.13.1`
+- HikariCP `7.0.2`
+- MySQL Connector/J `9.7.0`
+
+The shaded plugin artifact is produced under:
 
 ```text
 build/libs/PixelProtect.jar
 ```
 
-The build targets Java 25 and the Paper 26.2 build 121 development bundle. CI validates the source API boundary, project independence, legacy descriptor absence and shaded artifact structure. CI intentionally does not download or boot a Paper server; runtime server provisioning belongs to the deployment environment.
+## Project structure
 
-## Architecture
+```text
+src/main/java/de/pixelprotect/
+├── PixelProtect.java
+├── command/
+│   └── PixelProtectCommand.java
+├── database/
+│   └── DatabaseManager.java
+├── listener/
+│   └── ForensicListener.java
+├── model/
+│   ├── BlockLog.java
+│   ├── Endpoint.java
+│   ├── EndpointType.java
+│   ├── Owner.java
+│   └── TransferLog.java
+├── service/
+│   ├── AsyncLogQueue.java
+│   ├── InspectorService.java
+│   ├── OwnershipService.java
+│   ├── RollbackService.java
+│   ├── TransferService.java
+│   └── WorldAuditService.java
+└── util/
+    ├── EndpointResolver.java
+    ├── InventoryDiff.java
+    └── ItemCodec.java
 
-See `docs/ARCHITECTURE.md` for the threading, persistence and rollback model.
+src/main/resources/
+├── config.yml
+└── paper-plugin.yml
+```
+
+## Design boundaries
+
+Pixel-Protect intentionally does **not** use CraftBukkit classes, versioned NMS packages or legacy `plugin.yml` registration.
+
+It also does not pretend to know an actor when the available event data cannot establish one. Automated attribution is based on recorded endpoint ownership; otherwise the result is marked as unknown.
+
+The current implementation is deliberately focused on the forensic transfer/rollback problem rather than reproducing every historical CoreProtect feature. The source of truth is the recorded transaction history plus the current live world state used for conflict checks.
