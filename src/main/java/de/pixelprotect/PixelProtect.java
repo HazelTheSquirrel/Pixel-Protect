@@ -15,6 +15,7 @@ import de.pixelprotect.listener.PlayerAuditListener;
 import de.pixelprotect.listener.PlayerInventoryAuditListener;
 import de.pixelprotect.listener.PlayerMechanicsAuditListener;
 import de.pixelprotect.listener.PlayerTransactionAuditListener;
+import de.pixelprotect.listener.WorldEditAuditListener;
 import de.pixelprotect.service.AuditService;
 import de.pixelprotect.service.AutomationTracker;
 import de.pixelprotect.service.InspectService;
@@ -38,6 +39,7 @@ import java.util.UUID;
 public final class PixelProtect extends JavaPlugin {
     private Database database;
     private PixelProtectApiImpl api;
+    private WorldEditAuditListener worldEditAudit;
 
     @Override
     public void onEnable() {
@@ -62,6 +64,17 @@ public final class PixelProtect extends JavaPlugin {
         final AuditService audit = new AuditService(database, includedWorlds, excludedWorlds);
         api = new PixelProtectApiImpl(database, includedWorlds, excludedWorlds, databaseFile.resolveSibling(databaseFile.getFileName() + ".overflow.jsonl"));
         getServer().getServicesManager().register(PixelProtectApi.class, api, this, ServicePriority.Normal);
+
+        if (getServer().getPluginManager().getPlugin("WorldEdit") != null) {
+            try {
+                worldEditAudit = new WorldEditAuditListener(audit);
+                worldEditAudit.register();
+                getLogger().info("WorldEdit-Forensik aktiviert.");
+            } catch (RuntimeException exception) {
+                worldEditAudit = null;
+                getLogger().warning("WorldEdit-Forensik konnte nicht aktiviert werden: " + exception.getMessage());
+            }
+        }
 
         final AutomationTracker automation = new AutomationTracker();
         final InspectService inspect = new InspectService(database);
@@ -117,6 +130,7 @@ public final class PixelProtect extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (worldEditAudit != null) { worldEditAudit.unregister(); worldEditAudit = null; }
         if (api != null) { getServer().getServicesManager().unregisterAll(this); api.shutdown(); api = null; }
         if (database != null) { database.close(); database = null; }
     }
