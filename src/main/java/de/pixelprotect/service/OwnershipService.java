@@ -27,14 +27,14 @@ public final class OwnershipService {
         owners.put(endpointId, owner);
         UUID incarnation = UUID.randomUUID();
         incarnations.put(endpointId, incarnation);
-        queue.submitOwnership(new AsyncLogQueue.OwnershipRecord(endpointId, endpoint, owner, Instant.now()));
+        queue.submitOwnership(new AsyncLogQueue.OwnershipRecord(endpointId, endpoint, owner, Instant.now(), incarnation, true));
     }
 
     public void invalidate(Endpoint endpoint) {
         String endpointId = endpoint.identity();
         owners.remove(endpointId);
         incarnations.remove(endpointId);
-        queue.submitOwnership(new AsyncLogQueue.OwnershipRecord(endpointId, endpoint, new Owner(UUID(0), "__INVALID__"), Instant.now()));
+        queue.submitOwnership(new AsyncLogQueue.OwnershipRecord(endpointId, endpoint, null, Instant.now(), null, false));
     }
 
     public CompletableFuture<Optional<Owner>> resolve(Endpoint endpoint) {
@@ -51,9 +51,5 @@ public final class OwnershipService {
 
     public UUID incarnation(Endpoint endpoint) {
         return incarnations.get(endpoint.identity());
-    }
-
-    private static UUID UUID(int ignored) {
-        return new UUID(0L, 0L);
     }
 }
