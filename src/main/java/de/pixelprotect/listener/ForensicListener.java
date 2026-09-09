@@ -19,16 +19,16 @@ import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 
 public final class ForensicListener implements Listener {
-    private final TransferService transfers; private final WorldAuditService world; private final InspectorService inspector;
+    private final TransferService transfers;private final WorldAuditService world;private final InspectorService inspector;
     public ForensicListener(TransferService transfers,WorldAuditService world,InspectorService inspector){this.transfers=transfers;this.world=world;this.inspector=inspector;}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void place(BlockPlaceEvent e){world.blockPlace(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void breakBlock(BlockBreakEvent e){world.blockBreak(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void entityPlace(EntityPlaceEvent e){world.entityPlace(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void click(InventoryClickEvent e){if(e.getWhoClicked() instanceof Player p)transfers.capturePlayerInventoryChange(p,e.getView());}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void drag(InventoryDragEvent e){if(e.getWhoClicked() instanceof Player p)transfers.capturePlayerInventoryChange(p,e.getView());}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void move(InventoryMoveItemEvent e){transfers.captureAutomation(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void pickup(InventoryPickupItemEvent e){transfers.captureHopperPickup(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void drop(PlayerDropItemEvent e){transfers.capturePlayerDrop(e);}
-    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true) public void entityPickup(EntityPickupItemEvent e){transfers.capturePlayerPickup(e);}
-    @EventHandler(priority=EventPriority.HIGHEST,ignoreCancelled=false) public void inspect(PlayerInteractEvent e){inspector.interact(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void place(BlockPlaceEvent e){world.blockPlace(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void breakBlock(BlockBreakEvent e){world.blockBreak(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void entityPlace(EntityPlaceEvent e){world.entityPlace(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void click(InventoryClickEvent e){transfers.captureClick(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void drag(InventoryDragEvent e){transfers.captureDrag(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void move(InventoryMoveItemEvent e){transfers.captureAutomation(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void pickup(InventoryPickupItemEvent e){transfers.captureHopperPickup(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void drop(PlayerDropItemEvent e){transfers.capturePlayerDrop(e);}
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)public void entityPickup(EntityPickupItemEvent e){transfers.capturePlayerPickup(e);}
+    @EventHandler(priority=EventPriority.HIGHEST,ignoreCancelled=false)public void inspect(PlayerInteractEvent e){if(e.getPlayer() instanceof Player p)inspector.interact(e);}
 }
