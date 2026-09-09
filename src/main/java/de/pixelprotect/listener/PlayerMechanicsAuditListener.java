@@ -30,6 +30,7 @@ public final class PlayerMechanicsAuditListener implements Listener {
     public void onBucketEntity(PlayerBucketEntityEvent event) {
         Player player = event.getPlayer();
         Entity entity = event.getEntity();
+        if (entity == null) return;
         Block block = entity.getLocation().getBlock();
         String detail = "BUCKET_ENTITY:" + entity.getType().getKey() + ":ENTITY=" + entity.getUniqueId()
                 + ":BUCKET=" + event.getEntityBucket().getType().getKey();
@@ -40,6 +41,7 @@ public final class PlayerMechanicsAuditListener implements Listener {
     public void onArmorStand(PlayerArmorStandManipulateEvent event) {
         Player player = event.getPlayer();
         Entity entity = event.getRightClicked();
+        if (entity == null) return;
         String detail = "ARMOR_STAND:" + event.getSlot().name()
                 + ":PLAYER_ITEM=" + item(event.getPlayerItem())
                 + ":ENTITY_ITEM=" + item(event.getArmorStandItem());
@@ -49,13 +51,17 @@ public final class PlayerMechanicsAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onFlowerPot(PlayerFlowerPotManipulateEvent event) {
         Player player = event.getPlayer();
-        Block block = event.getBlock();
-        record(player, block, ActionType.FLOWER_POT, "FLOWER_POT_MANIPULATE:" + block.getType().getKey());
+        Block block = event.getFlowerpot();
+        if (block == null) return;
+        record(player, block, ActionType.FLOWER_POT,
+                "FLOWER_POT_MANIPULATE:" + (event.isPlacing() ? "PLACE" : "REMOVE")
+                        + ":ITEM=" + item(event.getItem()));
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onShear(PlayerShearEntityEvent event) {
         Entity entity = event.getEntity();
+        if (entity == null) return;
         String detail = "PLAYER_SHEAR:" + entity.getType().getKey() + ":ENTITY=" + entity.getUniqueId()
                 + ":DROPS=" + event.getDrops().size();
         record(event.getPlayer(), entity.getLocation().getBlock(), ActionType.SHEAR, detail);
@@ -64,6 +70,7 @@ public final class PlayerMechanicsAuditListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHarvest(PlayerHarvestBlockEvent event) {
         Block block = event.getHarvestedBlock();
+        if (block == null) return;
         String detail = "HARVEST:" + block.getType().getKey() + ":DROPS=" + event.getItemsHarvested().size();
         record(event.getPlayer(), block, ActionType.GROW, detail);
     }
@@ -77,7 +84,7 @@ public final class PlayerMechanicsAuditListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onFish(PlayerFishEvent event) {
-        String caught = event.getCaught() == null ? "none" : event.getCaught().getType().getKey();
+        String caught = event.getCaught() == null ? "none" : event.getCaught().getType().getKey().toString();
         record(event.getPlayer(), event.getPlayer().getLocation().getBlock(), ActionType.INTERACT,
                 "FISH:" + event.getState().name() + ":CAUGHT=" + caught);
     }
