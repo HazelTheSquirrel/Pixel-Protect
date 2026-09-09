@@ -14,6 +14,8 @@ import java.util.logging.Logger;
 
 /** MySQL/MariaDB JDBC backend. Hikari owns the database connection lifecycle. */
 public final class MySqlDatabase extends AsyncOverflowDatabase {
+    private static final int MYSQL_SCHEMA_VERSION = 8;
+
     private final String jdbcUrl;
     private final String username;
     private final String password;
@@ -48,6 +50,7 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
         config.setMaximumPoolSize(maximumPoolSize);
         config.setMinimumIdle(minimumIdle);
         config.setConnectionTimeout(connectionTimeoutMillis);
+        config.setInitializationFailTimeout(connectionTimeoutMillis);
         config.setPoolName("PixelProtect-MySQL");
         if (leakDetectionMillis > 0) config.setLeakDetectionThreshold(leakDetectionMillis);
         config.addDataSourceProperty("cachePrepStmts", "true");
@@ -77,26 +80,26 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
 
             if (version < 1) {
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS audit (id BIGINT AUTO_INCREMENT PRIMARY KEY,time BIGINT NOT NULL,world VARCHAR(36) NOT NULL,x INT NOT NULL,y INT NOT NULL,z INT NOT NULL,actor_uuid VARCHAR(36),actor_name VARCHAR(255) NOT NULL,action VARCHAR(64) NOT NULL,before_data LONGTEXT NOT NULL,after_data LONGTEXT NOT NULL,before_inventory LONGBLOB,after_inventory LONGBLOB) ENGINE=InnoDB");
-                statement.executeUpdate("CREATE INDEX idx_audit_location_time ON audit(world,x,z,time DESC)");
-                statement.executeUpdate("CREATE INDEX idx_audit_actor_time ON audit(actor_uuid,time DESC)");
-                statement.executeUpdate("CREATE INDEX idx_audit_action_time ON audit(action,time DESC)");
-                statement.executeUpdate("CREATE INDEX idx_audit_time ON audit(time)");
+                createIndexIfMissing(statement, "idx_audit_location_time", "audit(world,x,z,time DESC)");
+                createIndexIfMissing(statement, "idx_audit_actor_time", "audit(actor_uuid,time DESC)");
+                createIndexIfMissing(statement, "idx_audit_action_time", "audit(action,time DESC)");
+                createIndexIfMissing(statement, "idx_audit_time", "audit(time)");
                 version = 1;
             }
             if (version < 2) {
-                statement.executeUpdate("CREATE INDEX idx_audit_world_y_time ON audit(world,y,time DESC)");
-                statement.executeUpdate("CREATE INDEX idx_audit_world_action_time ON audit(world,action,time DESC)");
+                createIndexIfMissing(statement, "idx_audit_world_y_time", "audit(world,y,time DESC)");
+                createIndexIfMissing(statement, "idx_audit_world_action_time", "audit(world,action,time DESC)");
                 version = 2;
             }
             if (version < 3) {
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_jobs (id VARCHAR(36) PRIMARY KEY,status VARCHAR(32) NOT NULL,total INT NOT NULL,processed INT NOT NULL DEFAULT 0,applied INT NOT NULL DEFAULT 0,skipped INT NOT NULL DEFAULT 0,error TEXT,created_at BIGINT NOT NULL,finished_at BIGINT) ENGINE=InnoDB");
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_job_entries (job_id VARCHAR(36) NOT NULL,audit_id BIGINT NOT NULL,applied TINYINT NOT NULL DEFAULT 0,PRIMARY KEY(job_id,audit_id),FOREIGN KEY(job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE,FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE) ENGINE=InnoDB");
-                statement.executeUpdate("CREATE INDEX idx_rollback_job_entries_applied ON rollback_job_entries(job_id,applied)");
+                createIndexIfMissing(statement, "idx_rollback_job_entries_applied", "rollback_job_entries(job_id,applied)");
                 version = 3;
             }
             if (version < 4) {
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS rollback_restores (id VARCHAR(36) PRIMARY KEY,source_job_id VARCHAR(36) NOT NULL,status VARCHAR(32) NOT NULL,applied INT NOT NULL DEFAULT 0,skipped INT NOT NULL DEFAULT 0,error TEXT,created_at BIGINT NOT NULL,finished_at BIGINT,FOREIGN KEY(source_job_id) REFERENCES rollback_jobs(id) ON DELETE CASCADE) ENGINE=InnoDB");
-                statement.executeUpdate("CREATE INDEX idx_rollback_restores_source ON rollback_restores(source_job_id,created_at DESC)");
+                createIndexIfMissing(statement, "idx_rollback_restores_source", "rollback_restores(source_job_id,created_at DESC)");
                 version = 4;
             }
             if (version < 5) {
@@ -112,12 +115,12 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
             }
             if (version < 7) {
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS entity_audit (id BIGINT AUTO_INCREMENT PRIMARY KEY,audit_id BIGINT NOT NULL,world VARCHAR(36) NOT NULL,x DOUBLE NOT NULL,y DOUBLE NOT NULL,z DOUBLE NOT NULL,actor_uuid VARCHAR(36),action VARCHAR(64) NOT NULL,before_snapshot LONGTEXT,after_snapshot LONGTEXT,spawn_reason VARCHAR(64),remove_cause VARCHAR(64),transaction_id VARCHAR(36),sequence BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE) ENGINE=InnoDB");
-                statement.executeUpdate("CREATE INDEX idx_entity_audit_location_time ON entity_audit(world,x,y,z,audit_id)");
-                statement.executeUpdate("CREATE INDEX idx_entity_audit_actor ON entity_audit(actor_uuid,audit_id)");
-                statement.executeUpdate("CREATE INDEX idx_entity_audit_transaction ON entity_audit(transaction_id,sequence,audit_id)");
+                createIndexIfMissing(statement, "idx_entity_audit_location_time", "entity_audit(world,x,y,z,audit_id)");
+                createIndexIfMissing(statement, "idx_entity_audit_actor", "entity_audit(actor_uuid,audit_id)");
+                createIndexIfMissing(statement, "idx_entity_audit_transaction", "entity_audit(transaction_id,sequence,audit_id)");
                 statement.executeUpdate("CREATE TABLE IF NOT EXISTS inventory_audit (id BIGINT AUTO_INCREMENT PRIMARY KEY,audit_id BIGINT NOT NULL,world VARCHAR(36) NOT NULL,x INT NOT NULL,y INT NOT NULL,z INT NOT NULL,actor_uuid VARCHAR(36),slot_diff LONGTEXT NOT NULL,transaction_id VARCHAR(36),sequence BIGINT NOT NULL DEFAULT 0,FOREIGN KEY(audit_id) REFERENCES audit(id) ON DELETE CASCADE) ENGINE=InnoDB");
-                statement.executeUpdate("CREATE INDEX idx_inventory_audit_location ON inventory_audit(world,x,y,z,audit_id)");
-                statement.executeUpdate("CREATE INDEX idx_inventory_audit_transaction ON inventory_audit(transaction_id,sequence,audit_id)");
+                createIndexIfMissing(statement, "idx_inventory_audit_location", "inventory_audit(world,x,y,z,audit_id)");
+                createIndexIfMissing(statement, "idx_inventory_audit_transaction", "inventory_audit(transaction_id,sequence,audit_id)");
                 version = 7;
             }
             if (version < 8) {
@@ -126,6 +129,7 @@ public final class MySqlDatabase extends AsyncOverflowDatabase {
                 createIndexIfMissing(statement, "idx_audit_world_xyz_time", "audit(world,x,y,z,time DESC,id DESC)");
                 version = 8;
             }
+            if (version != MYSQL_SCHEMA_VERSION) throw new SQLException("Unsupported PixelProtect MySQL schema version: " + version);
 
             statement.executeUpdate("UPDATE rollback_jobs SET status='FAILED',error='Server restarted while rollback was running.',finished_at=" + System.currentTimeMillis() + " WHERE status='RUNNING'");
             try (var update = connection.prepareStatement("INSERT INTO pixelprotect_meta(meta_key,meta_value) VALUES(?,?) ON DUPLICATE KEY UPDATE meta_value=VALUES(meta_value)")) {
