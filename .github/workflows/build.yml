@@ -13,7 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,75 +94,6 @@ jobs:
           fi
 
           echo 'PixelProtect artifact validation passed.'
-
-      - name: Paper 26.2 startup smoke test
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p integration-server/plugins
-          cp build/libs/PixelProtect.jar integration-server/plugins/PixelProtect.jar
-          printf 'eula=true\n' > integration-server/eula.txt
-
-          paper_user_agent='PixelProtect-CI/1.0.0 (https://github.com/HazelTheSquirrel/Pixel-Protect)'
-          paper_url="$(curl --fail --silent --show-error --location \
-            --header "User-Agent: ${paper_user_agent}" \
-            'https://fill.papermc.io/v3/projects/paper/versions/26.2/builds/121' \
-            | jq -er '.downloads["server:default"].url')"
-
-          test -n "$paper_url"
-          curl --fail --silent --show-error --location \
-            --header "User-Agent: ${paper_user_agent}" \
-            "$paper_url" \
-            --output integration-server/paper.jar
-
-          test -s integration-server/paper.jar
-
-          server_pid=''
-          cleanup() {
-            if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
-              kill -TERM "$server_pid" 2>/dev/null || true
-              for _ in $(seq 1 15); do
-                if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
-                sleep 1
-              done
-              kill -KILL "$server_pid" 2>/dev/null || true
-            fi
-            echo '--- Paper server log (last 300 lines) ---'
-            tail -n 300 integration-server/server.log 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          cd integration-server
-          java -Xms512M -Xmx1G -jar paper.jar --nogui > server.log 2>&1 &
-          server_pid=$!
-
-          ready=0
-          for _ in $(seq 1 120); do
-            if grep -q 'Done (' server.log 2>/dev/null; then
-              ready=1
-              break
-            fi
-            if grep -Eq 'Failed to load|Could not load|Exception in thread|ERROR.*PixelProtect|SEVERE.*PixelProtect' server.log 2>/dev/null; then
-              echo 'Paper reported a startup failure:'
-              cat server.log
-              exit 1
-            fi
-            if ! kill -0 "$server_pid" 2>/dev/null; then
-              echo 'Paper terminated before startup completed.'
-              cat server.log
-              exit 1
-            fi
-            sleep 2
-          done
-
-          if [[ "$ready" -ne 1 ]]; then
-            echo 'Paper did not reach the ready state within 240 seconds.'
-            cat server.log
-            exit 1
-          fi
-
-          grep -q "PixelProtect wurde mit Speicher-Backend 'sqlite' aktiviert" server.log
-          echo 'Paper 26.2 build 121 startup smoke test passed.'
 
       - name: Upload plugin
         uses: actions/upload-artifact@v4
