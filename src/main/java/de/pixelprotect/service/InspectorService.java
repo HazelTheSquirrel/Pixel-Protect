@@ -6,7 +6,6 @@ import de.pixelprotect.model.Endpoint;
 import de.pixelprotect.model.EndpointType;
 import de.pixelprotect.model.TransferLog;
 import org.bukkit.Bukkit;
-import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
@@ -131,6 +130,8 @@ public final class InspectorService {
         String endpointLabel = endpointLabel(container);
         StringBuilder firstLine = new StringBuilder(actor).append(" hat ");
         boolean wroteDirection = false;
+
+        player.sendMessage(Component.text(SEPARATOR, NamedTextColor.WHITE));
 
         if (!deposits.isEmpty()) {
             firstLine.append(formatItems(deposits)).append(" in ").append(endpointLabel).append(" gelegt");
