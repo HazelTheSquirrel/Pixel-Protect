@@ -1,0 +1,98 @@
+package de.pixelprotect.listener;
+
+import de.pixelprotect.model.Endpoint;
+import de.pixelprotect.model.EndpointType;
+import de.pixelprotect.model.Owner;
+import de.pixelprotect.service.InspectorService;
+import de.pixelprotect.service.OwnershipService;
+import de.pixelprotect.service.TransferService;
+import de.pixelprotect.service.WorldForensicsService;
+import de.pixelprotect.util.EndpointResolver;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockState;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockMultiPlaceEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityPlaceEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.block.Action;
+import org.bukkit.inventory.BlockInventoryHolder;
+import org.bukkit.inventory.InventoryHolder;
+
+public final class ForensicListener implements Listener {
+    private final WorldForensicsService world;
+    private final TransferService transfer;
+    private final InspectorService inspector;
+    private final OwnershipService ownership;
+
+    public ForensicListener(WorldForensicsService world, TransferService transfer, InspectorService inspector, OwnershipService ownership){this.world=world;this.transfer=transfer;this.inspector=inspector;this.ownership=ownership;}
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onBreak(BlockBreakEvent event){
+        if(event.getPlayer()==null)return;
+        Block block=event.getBlock();
+        world.blockBroken(event.getPlayer(),block,block.getBlockData().getAsString());
+    }
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onPlace(BlockPlaceEvent event){
+        if(event instanceof BlockMultiPlaceEvent)return;
+        world.blockPlaced(event.getPlayer(),event.getBlockPlaced(),event.getBlockReplacedState().getBlockData().getAsString());
+        registerContainerOwner(event.getPlayer(),event.getBlockPlaced());
+    }
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onMultiPlace(BlockMultiPlaceEvent event){
+        for(BlockState state:event.getReplacedBlockStates()){
+            Block block=state.getBlock();
+            world.blockPlaced(event.getPlayer(),block,state.getBlockData().getAsString());
+            registerContainerOwner(event.getPlayer(),block);
+        }
+    }
+
+    @EventHandler(priority=EventPriority.HIGHEST,ignoreCancelled=false)
+    public void onInteract(PlayerInteractEvent event){
+        if(!inspector.isEnabled(event.getPlayer()))return;
+        if(event.getAction()!=Action.LEFT_CLICK_BLOCK&&event.getAction()!=Action.RIGHT_CLICK_BLOCK)return;
+        Block block=event.getClickedBlock();
+        if(block==null)return;
+        event.setCancelled(true);
+        inspector.inspect(event.getPlayer(),block);
+    }
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onClick(InventoryClickEvent event){transfer.playerClick(event);}
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onDrag(InventoryDragEvent event){transfer.playerDrag(event);}
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onMove(InventoryMoveItemEvent event){transfer.automatedMove(event);}
+
+    @EventHandler(priority=EventPriority.MONITOR,ignoreCancelled=true)
+    public void onEntityPlace(EntityPlaceEvent event){
+        Entity entity=event.getEntity();
+        Player player=event.getPlayer();
+        if(player==null)return;
+        if(!(entity instanceof org.bukkit.entity.StorageMinecart))return;
+        var l=entity.getLocation();
+        Endpoint endpoint=Endpoint.entity(EndpointType.MINECART,entity.getUniqueId(),l.getWorld().getName(),l.getBlockX(),l.getBlockY(),l.getBlockZ(),"storage_minecart");
+        ownership.register(endpoint,new Owner(player.getUniqueId(),player.getName()));
+    }
+
+    private void registerContainerOwner(Player player,Block block){
+        if(!(block.getState() instanceof InventoryHolder holder))return;
+        var inventory=holder.getInventory();
+        Endpoint endpoint=EndpointResolver.resolve(inventory);
+        if(endpoint==null)return;
+        if(endpoint.type()==EndpointType.CONTAINER||endpoint.type()==EndpointType.HOPPER)ownership.register(endpoint,new Owner(player.getUniqueId(),player.getName()));
+    }
+}
