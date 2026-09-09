@@ -10,19 +10,13 @@ version = '1.0.0'
 repositories {
     mavenCentral()
     maven { name = 'papermc'; url = 'https://repo.papermc.io/repository/maven-public/' }
-    maven { name = 'enginehub'; url = 'https://maven.enginehub.org/repo/' }
 }
 
 dependencies {
     paperweight.paperDevBundle('26.2.build.121-stable')
-    compileOnly('com.sk89q.worldedit:worldedit-core:7.4.4')
-    compileOnly('com.sk89q.worldedit:worldedit-bukkit:7.4.4')
-    implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
     implementation 'com.google.code.gson:gson:2.13.1'
     implementation 'com.zaxxer:HikariCP:7.0.2'
     implementation 'com.mysql:mysql-connector-j:9.7.0'
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.13.4'
 }
 
 paperweight {
@@ -39,14 +33,8 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs.addAll(['-Xlint:all'])
 }
 
-tasks.withType(Test).configureEach {
-    useJUnitPlatform()
-}
-
 tasks.shadowJar {
     archiveFileName = 'PixelProtect.jar'
-    relocate 'org.sqlite', 'de.pixelprotect.libs.sqlite'
-    relocate 'com.sun.jna', 'de.pixelprotect.libs.jna'
     relocate 'com.google.gson', 'de.pixelprotect.libs.gson'
     relocate 'com.zaxxer.hikari', 'de.pixelprotect.libs.hikari'
     relocate 'com.mysql', 'de.pixelprotect.libs.mysql'
@@ -54,6 +42,4 @@ tasks.shadowJar {
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }
 
-tasks.build {
-    dependsOn tasks.shadowJar
-}
+tasks.build { dependsOn tasks.shadowJar }

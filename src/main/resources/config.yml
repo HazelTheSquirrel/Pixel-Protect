@@ -1,0 +1,9 @@
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  database: pixelprotect
+  username: pixelprotect
+  password: change-me
+  pool-size: 8
+logging:
+  queue-capacity: 100000
