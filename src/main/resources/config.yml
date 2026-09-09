@@ -1,0 +1,18 @@
+storage:
+  mode: local
+  fallback-to-local: true
+  mysql:
+    host: 127.0.0.1
+    port: 3306
+    database: pixelprotect
+    username: pixelprotect
+    password: change-me
+    pool-size: 8
+logging:
+  queue-capacity: 50000
+  batch-size: 250
+  flush-interval-ms: 250
+  inspector-limit: 12
+rollback:
+  conflict-policy: skip
+  max-entries: 10000
