@@ -27,6 +27,10 @@ public final class InspectListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onInteract(org.bukkit.event.player.PlayerInteractEvent event) {
         final var player = event.getPlayer();
+        if (!player.isOp()) {
+            inspect.disable(player);
+            return;
+        }
         if (!inspect.isEnabled(player)) return;
         if (event.getAction() != Action.LEFT_CLICK_BLOCK && event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         final var block = event.getClickedBlock();
@@ -39,8 +43,9 @@ public final class InspectListener implements Listener {
         final var worldId = block.getWorld().getUID();
         final String blockTranslationKey = block.getType().translationKey();
 
+        player.sendActionBar(Component.text("PixelProtect: Block-Historie wird geladen …", NamedTextColor.YELLOW));
         inspect.lookup(worldId, x, y, z).thenAccept(entries -> player.getScheduler().run(plugin, task -> {
-            if (!player.isOnline()) return;
+            if (!player.isOnline() || !player.isOp() || !inspect.isEnabled(player)) return;
             Component message = Component.empty()
                     .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY))
                     .append(Component.newline())
@@ -54,22 +59,25 @@ public final class InspectListener implements Listener {
                     .append(Component.text("Koordinaten: ", NamedTextColor.GRAY))
                     .append(Component.text(MessageService.coordinates(x, y, z), NamedTextColor.WHITE))
                     .append(Component.newline())
-                    .append(Component.text("Block: ", NamedTextColor.GRAY))
+                    .append(Component.text("Aktueller Block: ", NamedTextColor.GRAY))
                     .append(Component.text(blockTranslationKey, NamedTextColor.WHITE))
+                    .append(Component.newline())
+                    .append(Component.text("Historie: ", NamedTextColor.GRAY))
+                    .append(Component.text("letzte 7 Tage", NamedTextColor.WHITE))
                     .append(Component.newline())
                     .append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY));
 
             if (entries.isEmpty()) {
                 message = message.append(Component.newline())
-                        .append(Component.text("Keine gespeicherten Änderungen für diesen Block gefunden.", NamedTextColor.YELLOW));
+                        .append(Component.text("Keine gespeicherten Ereignisse für diesen Block gefunden.", NamedTextColor.YELLOW));
             } else {
                 message = message.append(Component.newline())
-                        .append(Component.text("Gefundene Einträge: ", NamedTextColor.GRAY))
+                        .append(Component.text("Gefundene Ereignisse: ", NamedTextColor.GRAY))
                         .append(Component.text(Integer.toString(Math.min(entries.size(), 10)), NamedTextColor.WHITE));
                 for (AuditEntry entry : entries.stream().limit(10).toList())
                     message = message.append(entryComponent(entry, automation.context(entry.transactionId())));
                 if (entries.size() > 10)
-                    message = message.append(Component.newline()).append(Component.text("Weitere Einträge sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
+                    message = message.append(Component.newline()).append(Component.text("Weitere Ereignisse sind vorhanden; maximal 10 werden angezeigt.", NamedTextColor.DARK_GRAY));
             }
             player.sendMessage(message.append(Component.newline()).append(Component.text("────────────────────────────────", NamedTextColor.DARK_GRAY)));
         }, null));
@@ -77,29 +85,74 @@ public final class InspectListener implements Listener {
 
     private static Component entryComponent(AuditEntry entry, AutomationTracker.TransferContext context) {
         final String actor = entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName();
+        final String actorId = entry.actor() == null ? "nicht verfügbar" : entry.actor().toString();
+        final String before = normalizeState(entry.beforeData());
+        final String after = normalizeState(entry.afterData());
+        final String source = context == null ? directSource(entry) : context.cause();
+
         Component result = Component.newline()
-                .append(Component.text("#" + entry.id(), NamedTextColor.YELLOW)).append(Component.text(" • ", NamedTextColor.GRAY)).append(Component.text(actor, NamedTextColor.WHITE))
+                .append(Component.text("#" + entry.id() + " • " + actor, NamedTextColor.YELLOW))
                 .append(Component.newline()).append(Component.text("  Aktion: ", NamedTextColor.GRAY)).append(Component.text(MessageService.action(entry.action()), NamedTextColor.WHITE))
                 .append(Component.newline()).append(Component.text("  Zeit: ", NamedTextColor.GRAY)).append(Component.text(MessageService.time(entry.time()), NamedTextColor.WHITE))
-                .append(Component.newline()).append(Component.text("  Koordinaten: ", NamedTextColor.GRAY)).append(Component.text(MessageService.coordinates(entry), NamedTextColor.WHITE));
+                .append(Component.newline()).append(Component.text("  Spieler-UUID: ", NamedTextColor.GRAY)).append(Component.text(actorId, NamedTextColor.DARK_GRAY))
+                .append(Component.newline()).append(Component.text("  Vorher: ", NamedTextColor.GRAY)).append(Component.text(before, NamedTextColor.RED))
+                .append(Component.newline()).append(Component.text("  Nachher: ", NamedTextColor.GRAY)).append(Component.text(after, NamedTextColor.GREEN))
+                .append(Component.newline()).append(Component.text("  Ursache: ", NamedTextColor.GRAY)).append(Component.text(source, NamedTextColor.YELLOW));
+
+        if (entry.details() != null) {
+            result = result.append(Component.newline())
+                    .append(Component.text("  Details: ", NamedTextColor.GRAY))
+                    .append(Component.text(cleanDetails(entry.details()), NamedTextColor.WHITE));
+        }
+
         final var changes = InventoryDiffService.itemChanges(entry.beforeInventory(), entry.afterInventory());
         if (!changes.isEmpty()) {
-            result = result.append(Component.newline()).append(Component.text("  Änderungen:", NamedTextColor.GRAY));
+            result = result.append(Component.newline()).append(Component.text("  Inventaränderungen:", NamedTextColor.GRAY));
             for (InventoryDiffService.ItemChange change : changes)
-                result = result.append(Component.newline()).append(Component.text("    " + (change.amount() > 0 ? "+ " : "− ") + Math.abs(change.amount()) + " × ", change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED)).append(change.displayName());
+                result = result.append(Component.newline()).append(Component.text("    " + (change.amount() > 0 ? "+ " : "−") + Math.abs(change.amount()) + " × ", change.amount() > 0 ? NamedTextColor.GREEN : NamedTextColor.RED)).append(change.displayName());
         }
         if (context != null) {
-            result = result.append(Component.newline()).append(Component.text("  Ursache: ", NamedTextColor.GRAY)).append(Component.text(context.cause(), NamedTextColor.YELLOW));
             if (context.owner() != null) result = result.append(Component.newline()).append(Component.text("  Indirekt verursacht durch: ", NamedTextColor.GRAY)).append(Component.text(context.owner().name(), NamedTextColor.WHITE));
             result = appendLocation(result, "Quelle", context.source());
             result = appendLocation(result, "Ziel", context.destination());
-            if (context.mechanism() != null) result = result.append(Component.newline()).append(Component.text("  Mechanismus: ", NamedTextColor.GRAY)).append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE)).append(Component.text(" @ ", NamedTextColor.GRAY)).append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
+            if (context.mechanism() != null)
+                result = result.append(Component.newline()).append(Component.text("  Mechanismus: ", NamedTextColor.GRAY))
+                        .append(Component.text(context.mechanismType().translationKey(), NamedTextColor.WHITE))
+                        .append(Component.text(" @ ", NamedTextColor.GRAY))
+                        .append(Component.text(location(context.mechanism()), NamedTextColor.WHITE));
         }
+        if (entry.transactionId() != null)
+            result = result.append(Component.newline()).append(Component.text("  Transaktion: ", NamedTextColor.GRAY)).append(Component.text(entry.transactionId().toString(), NamedTextColor.DARK_GRAY));
         return result;
+    }
+
+    private static String directSource(AuditEntry entry) {
+        return switch (entry.action()) {
+            case BREAK, PLACE, BUCKET, SIGN, COMMAND, CHAT, INTERACT, ENTITY_INTERACT, CRAFT, TRADE -> "Direkt durch Spieleraktion";
+            case EXPLOSION, TNT_PRIME -> "Indirekt durch Explosion/Explosionsquelle";
+            case PISTON, DISPENSE, COMPOST, CAULDRON -> "Indirekt durch Mechanik";
+            case FLUID -> "Indirekt durch Flüssigkeitsfluss";
+            case GROW, FORM, SPREAD, DECAY, MOISTURE, SCULK -> "Indirekt durch Weltmechanik";
+            case ENTITY_CHANGE, ENTITY_SPAWN, ENTITY_DEATH, ENTITY_REMOVE, ENTITY_DAMAGE, PROJECTILE -> "Indirekt durch Entität";
+            case WORLD_EDIT -> "Durch WorldEdit-Aktion";
+            default -> "Server-/Weltmechanik";
+        };
+    }
+
+    private static String normalizeState(String value) {
+        if (value == null || value.isBlank()) return "minecraft:air";
+        return value.replace("minecraft:", "minecraft:");
+    }
+
+    private static String cleanDetails(String value) {
+        return value.replace('\u0000', ' ').replace('\n', ' ').trim();
     }
 
     private static Component appendLocation(Component base, String label, AutomationTracker.LocationData location) {
         return location == null ? base : base.append(Component.newline()).append(Component.text("  " + label + ": ", NamedTextColor.GRAY)).append(Component.text(location(location), NamedTextColor.WHITE));
     }
-    private static String location(AutomationTracker.LocationData location) { return MessageService.coordinates(location.x(), location.y(), location.z()); }
+
+    private static String location(AutomationTracker.LocationData location) {
+        return MessageService.coordinates(location.x(), location.y(), location.z());
+    }
 }
