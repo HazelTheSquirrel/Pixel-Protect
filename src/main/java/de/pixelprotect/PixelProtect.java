@@ -4,6 +4,7 @@ import de.pixelprotect.api.PixelProtectApi;
 import de.pixelprotect.api.PixelProtectApiImpl;
 import de.pixelprotect.command.PixelProtectCommand;
 import de.pixelprotect.listener.ActivityAuditListener;
+import de.pixelprotect.listener.AdminCommandGuardListener;
 import de.pixelprotect.listener.AutomationAuditListener;
 import de.pixelprotect.listener.BlockAuditListener;
 import de.pixelprotect.listener.ContainerProcessingAuditListener;
@@ -91,6 +92,7 @@ public final class PixelProtect extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new ContainerProcessingAuditListener(this, audit), this);
         getServer().getPluginManager().registerEvents(new AutomationAuditListener(this, automation), this);
         getServer().getPluginManager().registerEvents(new InspectListener(this, inspect, automation), this);
+        getServer().getPluginManager().registerEvents(new AdminCommandGuardListener(this), this);
 
         final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect, getConfig().getInt("rollback.max-hours", 168), getConfig().getInt("rollback.max-radius", 128), getConfig().getInt("rollback.max-records", 100_000));
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, commands -> commands.registrar().register(command.create().build(), "Protokolliert, untersucht und setzt Weltänderungen zurück"));
