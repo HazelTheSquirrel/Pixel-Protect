@@ -95,7 +95,7 @@ public final class PixelProtect extends JavaPlugin {
         getServer().getPluginManager().registerEvents(new AdminCommandGuardListener(), this);
 
         final PixelProtectCommand command = new PixelProtectCommand(this, database, rollback, inspect, getConfig().getInt("rollback.max-hours", 168), getConfig().getInt("rollback.max-radius", 128), getConfig().getInt("rollback.max-records", 100_000));
-        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> event.registrar().register(command.create().build(), "Protokolliert, untersucht und setzt Weltänderungen zurück"));
+        getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> event.registrar().register(command.create().build(), "Protokolliert, untersucht und setzt Weltänderungen zurück", List.of("pp")));
 
         if (getConfig().getBoolean("retention.enabled", true)) {
             final int days = Math.max(1, getConfig().getInt("retention.days", 30));
@@ -106,7 +106,7 @@ public final class PixelProtect extends JavaPlugin {
             final long interval = Math.max(1L, getConfig().getLong("diagnostics.log-interval-minutes", 5L) * 1200L);
             Bukkit.getGlobalRegionScheduler().runAtFixedRate(this, task -> logDiagnostics(), interval, interval);
         }
-        getLogger().info("PixelProtect wurde mit Speicher-Backend '" + backend + "' aktiviert. Einziger Befehlspräfix: /pixelprotect");
+        getLogger().info("PixelProtect wurde mit Speicher-Backend '" + backend + "' aktiviert. Befehle: /pixelprotect und /pp");
     }
 
     private void logDiagnostics() {
