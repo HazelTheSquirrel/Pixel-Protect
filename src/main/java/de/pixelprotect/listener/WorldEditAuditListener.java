@@ -2,7 +2,6 @@ package de.pixelprotect.listener;
 
 import com.google.common.eventbus.Subscribe;
 import com.sk89q.worldedit.WorldEdit;
-import com.sk89q.worldedit.entity.Player;
 import com.sk89q.worldedit.event.extent.EditSessionEvent;
 import com.sk89q.worldedit.extent.AbstractDelegateExtent;
 import com.sk89q.worldedit.extent.Extent;
@@ -11,7 +10,6 @@ import com.sk89q.worldedit.world.block.BaseBlock;
 import com.sk89q.worldedit.world.block.BlockStateHolder;
 import de.pixelprotect.model.Actor;
 import de.pixelprotect.service.AuditService;
-import org.bukkit.Bukkit;
 import org.bukkit.World;
 
 import java.util.UUID;
