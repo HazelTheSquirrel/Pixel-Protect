@@ -136,7 +136,7 @@ public final class TransferService {
 
     public void automatedMove(InventoryMoveItemEvent event) {
         if (event.isCancelled()) return;
-        ItemStack item = event.getItemStack();
+        ItemStack item = event.getItem();
         if (item == null || item.isEmpty()) return;
 
         Endpoint source = EndpointResolver.resolve(event.getSource());
