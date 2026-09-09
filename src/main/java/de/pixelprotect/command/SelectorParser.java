@@ -28,7 +28,6 @@ public final class SelectorParser {
             String value = token.trim();
             if (value.equalsIgnoreCase("#count")) { count = true; continue; }
             if (value.equalsIgnoreCase("#preview")) { preview = true; continue; }
-            if (value.equalsIgnoreCase("#verbose") || value.equalsIgnoreCase("#silent")) continue;
             if (value.toLowerCase(Locale.ROOT).startsWith("#page:")) {
                 try { page = Integer.parseInt(value.substring(6)); }
                 catch (NumberFormatException e) { errors.add("Ungültige Seite: " + value); }
@@ -96,7 +95,6 @@ public final class SelectorParser {
             boolean positive = value.startsWith("+");
             String normalized = negative || positive ? value.substring(1) : value;
             Set<ActionType> target = negative ? exclude : include;
-            if (normalized.equals("+block") || normalized.equals("-block")) normalized = "block";
             switch (normalized) {
                 case "block" -> {
                     if (positive) target.add(ActionType.PLACE);
