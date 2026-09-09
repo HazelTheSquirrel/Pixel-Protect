@@ -79,6 +79,9 @@ public final class PixelProtectCommand {
                 .then(Commands.literal("restore").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
                         .then(Commands.argument("job", StringArgumentType.word())
                                 .executes(c -> restore(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
+                .then(Commands.literal("undo").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
+                        .then(Commands.argument("job", StringArgumentType.word())
+                                .executes(c -> restore(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
                 .then(Commands.literal("purge").requires(s -> s.getSender().hasPermission("pixelprotect.purge"))
                         .then(Commands.argument("days", IntegerArgumentType.integer(1, 3650))
                                 .executes(c -> purge(c.getSource().getSender(), IntegerArgumentType.getInteger(c, "days")))))
@@ -99,11 +102,8 @@ public final class PixelProtectCommand {
         Location location = resolveLocation(source, parsed);
         if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
         AuditQuery query;
-        try {
-            query = query(location, parsed);
-        } catch (ArithmeticException e) {
-            return message(source.getSender(), "PixelProtect: Die Seitennummer ist zu groß.");
-        }
+        try { query = query(location, parsed); }
+        catch (ArithmeticException e) { return message(source.getSender(), "PixelProtect: Die Seitennummer ist zu groß."); }
         if (parsed.countOnly()) {
             database.count(query).thenAccept(n -> send(source.getSender(), "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
                     .exceptionally(t -> { send(source.getSender(), "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
@@ -123,19 +123,15 @@ public final class PixelProtectCommand {
         if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
         CommandSender sender = source.getSender();
         final AuditQuery query;
-        try {
-            query = query(location, parsed);
-        } catch (ArithmeticException e) {
-            return message(sender, "PixelProtect: Die Seitennummer ist zu groß.");
-        }
+        try { query = query(location, parsed); }
+        catch (ArithmeticException e) { return message(sender, "PixelProtect: Die Seitennummer ist zu groß."); }
         if (parsed.countOnly()) {
             database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         }
-
-        final AuditQuery rollbackQuery = new AuditQuery(query.world(), query.centerX(), query.centerY(), query.centerZ(),
-                query.radius(), query.since(), query.until(), query.actorName(), query.includeActions(), query.excludeActions(),
+        final AuditQuery rollbackQuery = new AuditQuery(query.world(), query.centerX(), query.centerY(), query.centerZ(), query.radius(),
+                query.since(), query.until(), query.actorName(), query.includeActions(), query.excludeActions(),
                 query.includeBlocks(), query.excludeBlocks(), PAGE_SIZE, 0);
         queryAllForRollback(rollbackQuery, maxRecords).thenCompose(entries -> {
             if (entries.isEmpty()) {
@@ -158,17 +154,15 @@ public final class PixelProtectCommand {
     }
 
     private CompletableFuture<List<AuditEntry>> queryAllForRollback(AuditQuery base, int maximum) {
-        int boundedMaximum = Math.max(1, maximum);
-        return queryRollbackPage(base, 0, boundedMaximum, new ArrayList<>());
+        return queryRollbackPage(base, 0, Math.max(1, maximum), new ArrayList<>());
     }
 
     private CompletableFuture<List<AuditEntry>> queryRollbackPage(AuditQuery base, int offset, int maximum, List<AuditEntry> collected) {
         int remaining = maximum - collected.size();
         if (remaining <= 0) return CompletableFuture.completedFuture(List.copyOf(collected));
         int limit = Math.min(PAGE_SIZE, remaining);
-        AuditQuery page = new AuditQuery(base.world(), base.centerX(), base.centerY(), base.centerZ(), base.radius(),
-                base.since(), base.until(), base.actorName(), base.includeActions(), base.excludeActions(),
-                base.includeBlocks(), base.excludeBlocks(), limit, offset);
+        AuditQuery page = new AuditQuery(base.world(), base.centerX(), base.centerY(), base.centerZ(), base.radius(), base.since(), base.until(),
+                base.actorName(), base.includeActions(), base.excludeActions(), base.includeBlocks(), base.excludeBlocks(), limit, offset);
         return database.query(page).thenCompose(entries -> {
             collected.addAll(entries);
             if (entries.size() < limit) return CompletableFuture.completedFuture(List.copyOf(collected));
@@ -189,9 +183,9 @@ public final class PixelProtectCommand {
         long duration = parsed.durationMillis();
         long since = duration >= now ? 0L : now - duration;
         int offset = Math.multiplyExact(parsed.page() - 1, PAGE_SIZE);
-        return new AuditQuery(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(),
-                parsed.radius(), since, now, parsed.user(), parsed.includeActions(), parsed.excludeActions(),
-                parsed.includeBlocks(), parsed.excludeBlocks(), Math.min(PAGE_SIZE, maxRecords), offset);
+        return new AuditQuery(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), parsed.radius(),
+                since, now, parsed.user(), parsed.includeActions(), parsed.excludeActions(), parsed.includeBlocks(), parsed.excludeBlocks(),
+                Math.min(PAGE_SIZE, maxRecords), offset);
     }
 
     private int restore(CommandSender sender, String raw) {
@@ -200,9 +194,7 @@ public final class PixelProtectCommand {
             rollback.restore(id).thenAccept(r -> send(sender, "PixelProtect: Wiederherstellung abgeschlossen. " + r.applied() + " angewendet, " + r.skipped() + " übersprungen."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Wiederherstellung fehlgeschlagen – " + rootMessage(t)); return null; });
             return message(sender, "PixelProtect: Wiederherstellung gestartet …");
-        } catch (IllegalArgumentException e) {
-            return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig.");
-        }
+        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
     }
 
     private int rollbackStatus(CommandSender sender, String raw) {
@@ -215,9 +207,7 @@ public final class PixelProtectCommand {
                         + ", übersprungen: " + job.skipped() + (job.error() == null ? "" : " – Fehler: " + job.error()));
             }).exceptionally(t -> { send(sender, "PixelProtect: Statusabfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return message(sender, "PixelProtect: Status des Rücksetzauftrags wird geladen …");
-        } catch (IllegalArgumentException e) {
-            return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig.");
-        }
+        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
     }
 
     private int rollbackCancel(CommandSender sender, String raw) {
@@ -228,9 +218,7 @@ public final class PixelProtectCommand {
                     : "PixelProtect: Rücksetzauftrag nicht gefunden oder bereits abgeschlossen."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Abbruch fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
-        } catch (IllegalArgumentException e) {
-            return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig.");
-        }
+        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
     }
 
     private int purge(CommandSender sender, int days) {
@@ -254,49 +242,25 @@ public final class PixelProtectCommand {
         send(sender, "/pixelprotect rollback status <Auftrag> – Rücksetzstatus anzeigen");
         send(sender, "/pixelprotect rollback cancel <Auftrag> – Rücksetzung abbrechen");
         send(sender, "/pixelprotect restore <Auftrag> – abgeschlossene Rücksetzung wiederherstellen");
+        send(sender, "/pixelprotect undo <Auftrag> – letzte Rücksetzung umkehren");
         send(sender, "/pixelprotect purge <Tage> – alte Protokolle löschen");
         return Command.SINGLE_SUCCESS;
     }
 
-    private int version(CommandSender sender) {
-        return message(sender, "PixelProtect 1.0.0 – eigenständiger Protokoll- und Rücksetzungskern für Paper 26.2");
-    }
+    private int version(CommandSender sender) { return message(sender, "PixelProtect 1.0.0 – eigenständiger Protokoll- und Rücksetzungskern für Paper 26.2"); }
 
     private void sendLookup(CommandSender sender, PageResult result) {
         long pages = Math.max(1, (result.total() + PAGE_SIZE - 1) / PAGE_SIZE);
         send(sender, "PixelProtect: Seite " + result.page() + "/" + pages + " – " + result.entries().size() + " von insgesamt " + result.total() + " Einträgen.");
-        result.entries().forEach(e -> send(sender, "#" + e.id() + " – " + actor(e) + " – " + MessageService.action(e.action())
-                + " – " + MessageService.coordinates(e) + " – " + MessageService.time(e.time())));
+        result.entries().forEach(e -> send(sender, "#" + e.id() + " – " + actor(e) + " – " + MessageService.action(e.action()) + " – " + MessageService.coordinates(e) + " – " + MessageService.time(e.time())));
         if (result.page() < pages) send(sender, "PixelProtect: Nächste Seite: #page:" + (result.page() + 1));
     }
 
-    private static String actor(AuditEntry entry) {
-        return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName();
-    }
-
-    private static List<String> tokens(String raw) {
-        return raw == null || raw.isBlank() ? List.of() : Arrays.asList(raw.trim().split("\\s+"));
-    }
-
-    private int sendErrors(CommandSender sender, List<String> errors) {
-        errors.forEach(error -> send(sender, "PixelProtect: " + error));
-        return 0;
-    }
-
-    private int message(CommandSender sender, String message) {
-        send(sender, message);
-        return Command.SINGLE_SUCCESS;
-    }
-
-    private void send(CommandSender sender, String message) {
-        Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendPlainMessage(message));
-    }
-
-    private static String rootMessage(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null) current = current.getCause();
-        return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
-    }
-
+    private static String actor(AuditEntry entry) { return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName(); }
+    private static List<String> tokens(String raw) { return raw == null || raw.isBlank() ? List.of() : Arrays.asList(raw.trim().split("\\s+")); }
+    private int sendErrors(CommandSender sender, List<String> errors) { errors.forEach(error -> send(sender, "PixelProtect: " + error)); return 0; }
+    private int message(CommandSender sender, String message) { send(sender, message); return Command.SINGLE_SUCCESS; }
+    private void send(CommandSender sender, String message) { Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendPlainMessage(message)); }
+    private static String rootMessage(Throwable throwable) { Throwable current = throwable; while (current.getCause() != null) current = current.getCause(); return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage(); }
     private record PageResult(long total, List<AuditEntry> entries, int page) {}
 }
