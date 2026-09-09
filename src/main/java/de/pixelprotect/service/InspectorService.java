@@ -65,22 +65,19 @@ public final class InspectorService {
                 Instant since = Instant.now().minus(Duration.ofDays(3650));
                 List<DatabaseManager.StoredTransfer> transfers = database.findTransfers(world, x, y, z, 1.5, since, 50);
                 List<DatabaseManager.StoredBlock> blocks = database.findBlocks(world, x, y, z, 1.5, since, 50);
-                Bukkit.getScheduler().runTask(plugin, () -> send(player, transfers, blocks, world, x, y, z));
+                Bukkit.getScheduler().runTask(plugin, () -> send(player, transfers, blocks));
             } catch (Exception exception) {
-                Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(
+                Bukkit.getScheduler().runTask(plugin, () -> sendSingle(player,
                         Component.text("Pixel-Protect: Forensik-Abfrage fehlgeschlagen: " + exception.getMessage(), NamedTextColor.RED)));
             }
         });
     }
 
     private void send(Player player, List<DatabaseManager.StoredTransfer> transfers,
-                      List<DatabaseManager.StoredBlock> blocks, String world, int x, int y, int z) {
+                      List<DatabaseManager.StoredBlock> blocks) {
         if (!player.isOnline()) return;
-
         if (transfers.isEmpty() && blocks.isEmpty()) {
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-            player.sendMessage(Component.text("Keine protokollierten Ereignisse gefunden.", NamedTextColor.YELLOW));
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
+            sendSingle(player, Component.text("Keine protokollierten Ereignisse gefunden.", NamedTextColor.YELLOW));
             return;
         }
 
@@ -88,66 +85,45 @@ public final class InspectorService {
         for (DatabaseManager.StoredTransfer transfer : transfers) {
             grouped.computeIfAbsent(transfer.transactionId(), ignored -> new ArrayList<>()).add(transfer);
         }
+        for (List<DatabaseManager.StoredTransfer> group : grouped.values()) sendSingle(player, formatTransferGroup(group));
+        for (DatabaseManager.StoredBlock block : blocks) sendSingle(player, formatBlock(block));
+    }
 
-        for (List<DatabaseManager.StoredTransfer> group : grouped.values()) {
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-            player.sendMessage(formatTransferGroup(group));
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-        }
-
-        for (DatabaseManager.StoredBlock block : blocks) {
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-            player.sendMessage(formatBlock(block));
-            player.sendMessage(Component.text(SEP, NamedTextColor.DARK_GRAY));
-        }
+    private void sendSingle(Player player, Component content) {
+        player.sendMessage(Component.text(SEP + "\n", NamedTextColor.DARK_GRAY)
+                .append(content)
+                .append(Component.text("\n" + SEP, NamedTextColor.DARK_GRAY)));
     }
 
     public Component formatTransferGroup(List<DatabaseManager.StoredTransfer> transfers) {
         if (transfers.isEmpty()) return Component.empty();
-
         DatabaseManager.StoredTransfer first = transfers.getFirst();
         String actor = first.actorName() == null ? "Unbekannt" : first.actorName();
         boolean playerPut = first.source().type() == EndpointType.PLAYER && first.destination().type() != EndpointType.PLAYER;
         boolean playerTake = first.destination().type() == EndpointType.PLAYER && first.source().type() != EndpointType.PLAYER;
-
-        if (playerPut || playerTake) {
-            return formatPlayerTransferGroup(actor, transfers, first, playerPut);
-        }
+        if (playerPut || playerTake) return formatPlayerTransferGroup(actor, transfers, first);
         return formatAutomatedTransferGroup(transfers, first);
     }
 
-    private Component formatPlayerTransferGroup(String actor,
-                                                 List<DatabaseManager.StoredTransfer> transfers,
-                                                 DatabaseManager.StoredTransfer first,
-                                                 boolean firstIsPut) {
+    private Component formatPlayerTransferGroup(String actor, List<DatabaseManager.StoredTransfer> transfers,
+                                                 DatabaseManager.StoredTransfer first) {
         List<DatabaseManager.StoredTransfer> put = new ArrayList<>();
         List<DatabaseManager.StoredTransfer> take = new ArrayList<>();
-
         for (DatabaseManager.StoredTransfer transfer : transfers) {
-            if (transfer.source().type() == EndpointType.PLAYER && transfer.destination().type() != EndpointType.PLAYER) {
-                put.add(transfer);
-            } else if (transfer.destination().type() == EndpointType.PLAYER && transfer.source().type() != EndpointType.PLAYER) {
-                take.add(transfer);
-            }
+            if (transfer.source().type() == EndpointType.PLAYER && transfer.destination().type() != EndpointType.PLAYER) put.add(transfer);
+            else if (transfer.destination().type() == EndpointType.PLAYER && transfer.source().type() != EndpointType.PLAYER) take.add(transfer);
         }
 
-        Component message = Component.text(actor, NamedTextColor.GOLD)
-                .append(Component.text(" hat ", NamedTextColor.WHITE));
-
+        Component message = Component.text(actor, NamedTextColor.GOLD).append(Component.text(" hat ", NamedTextColor.WHITE));
         if (!put.isEmpty()) {
             message = message.append(formatItems(put, NamedTextColor.GREEN))
                     .append(Component.text(" in " + first.destination().label() + " gelegt", NamedTextColor.WHITE));
         }
-
         if (!take.isEmpty()) {
-            if (!put.isEmpty()) {
-                message = message.append(Component.text(",", NamedTextColor.WHITE))
-                        .append(Component.text("\nsowie ", NamedTextColor.WHITE));
-            }
+            if (!put.isEmpty()) message = message.append(Component.text(",\nsowie ", NamedTextColor.WHITE));
             message = message.append(formatItems(take, NamedTextColor.RED))
                     .append(Component.text(" aus " + firstSourceLabel(take, first) + " entnommen", NamedTextColor.WHITE));
         }
-
         message = message.append(Component.text(".", NamedTextColor.WHITE));
         return appendTransferMetadata(message, first, containerEndpoint(put, take, first));
     }
@@ -164,9 +140,7 @@ public final class InspectorService {
         return appendTransferMetadata(message, first, first.destination());
     }
 
-    private Component appendTransferMetadata(Component message,
-                                             DatabaseManager.StoredTransfer transfer,
-                                             Endpoint displayEndpoint) {
+    private Component appendTransferMetadata(Component message, DatabaseManager.StoredTransfer transfer, Endpoint displayEndpoint) {
         return message
                 .append(Component.text("\nZeit: ", NamedTextColor.GRAY))
                 .append(Component.text(FORMAT.format(transfer.timestamp()), NamedTextColor.WHITE))
@@ -181,8 +155,7 @@ public final class InspectorService {
         for (int i = 0; i < transfers.size(); i++) {
             if (i > 0) items = items.append(Component.text(", ", NamedTextColor.WHITE));
             DatabaseManager.StoredTransfer transfer = transfers.get(i);
-            items = items.append(Component.text(transfer.amount() + "x ", color))
-                    .append(itemName(transfer, color));
+            items = items.append(Component.text(transfer.amount() + "x ", color)).append(itemName(transfer, color));
         }
         return items;
     }
@@ -198,13 +171,11 @@ public final class InspectorService {
         }
     }
 
-    private static String firstSourceLabel(List<DatabaseManager.StoredTransfer> take,
-                                           DatabaseManager.StoredTransfer first) {
+    private static String firstSourceLabel(List<DatabaseManager.StoredTransfer> take, DatabaseManager.StoredTransfer first) {
         return take.isEmpty() ? first.source().label() : take.getFirst().source().label();
     }
 
-    private static Endpoint containerEndpoint(List<DatabaseManager.StoredTransfer> put,
-                                              List<DatabaseManager.StoredTransfer> take,
+    private static Endpoint containerEndpoint(List<DatabaseManager.StoredTransfer> put, List<DatabaseManager.StoredTransfer> take,
                                               DatabaseManager.StoredTransfer first) {
         if (!put.isEmpty()) return put.getFirst().destination();
         if (!take.isEmpty()) return take.getFirst().source();
@@ -212,8 +183,7 @@ public final class InspectorService {
     }
 
     private static String endpointLabel(Endpoint endpoint) {
-        if (endpoint.type() == EndpointType.BLOCK_CONTAINER) return endpoint.label();
-        if (endpoint.type() == EndpointType.MINECART) return endpoint.label();
+        if (endpoint.type() == EndpointType.BLOCK_CONTAINER || endpoint.type() == EndpointType.MINECART) return endpoint.label();
         return "Ort";
     }
 
@@ -222,7 +192,7 @@ public final class InspectorService {
         return "X " + endpoint.x() + " Y " + endpoint.y() + " Z " + endpoint.z();
     }
 
-    private static String rollbackId(UUID transactionId) {
+    public static String rollbackId(UUID transactionId) {
         String raw = transactionId.toString().replace("-", "").toUpperCase(Locale.ROOT);
         return "#" + raw.substring(0, 5);
     }
