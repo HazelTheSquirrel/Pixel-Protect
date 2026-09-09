@@ -1,6 +1,0 @@
-name: Pixel-Protect
-version: '1.0.0'
-main: de.pixelprotect.PixelProtect
-description: Forensisches Item-Transfer-, Container-, Block- und Rollback-System fuer Paper 26.2
-author: HazelTheSquirrel
-api-version: '26.2'
