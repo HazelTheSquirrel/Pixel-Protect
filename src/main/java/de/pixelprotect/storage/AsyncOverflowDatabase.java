@@ -9,7 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.sql.PreparedStatement;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -19,7 +19,7 @@ import java.util.logging.Logger;
 /** Dedicated durable overflow writer. Event and region threads only enqueue serialized records. */
 public class AsyncOverflowDatabase extends Database {
     private static final Gson GSON = new Gson();
-    private final LinkedBlockingQueue<String> overflowQueue = new LinkedBlockingQueue<>();
+    private final ArrayBlockingQueue<String> overflowQueue;
     private final AtomicBoolean overflowRunning = new AtomicBoolean();
     private final AtomicLong overflowAccepted = new AtomicLong();
     private final AtomicLong overflowDropped = new AtomicLong();
@@ -28,6 +28,7 @@ public class AsyncOverflowDatabase extends Database {
 
     public AsyncOverflowDatabase(Path file, int queueCapacity, int batchSize, long flushIntervalMillis, Logger logger) {
         super(file, queueCapacity, batchSize, flushIntervalMillis, logger);
+        this.overflowQueue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         this.overflowWriter = new Thread(this::writeOverflowLoop, "PixelProtect-OverflowWriter");
         this.overflowWriter.setDaemon(true);
     }
@@ -55,7 +56,10 @@ public class AsyncOverflowDatabase extends Database {
         if (overflowRunning.get()) {
             boolean accepted = overflowQueue.offer(line);
             if (accepted) overflowAccepted.incrementAndGet();
-            else overflowDropped.incrementAndGet();
+            else {
+                overflowDropped.incrementAndGet();
+                logger.warning("PixelProtect overflow queue is full; an audit record was rejected to protect server memory.");
+            }
             return accepted;
         }
         try {
