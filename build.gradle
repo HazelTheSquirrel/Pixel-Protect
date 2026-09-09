@@ -26,7 +26,9 @@ paperweight {
     reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.getMOJANG_PRODUCTION()
 }
 
-java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
@@ -34,14 +36,21 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs.addAll(['-Xlint:all'])
 }
 
-tasks.withType(Test).configureEach { useJUnitPlatform() }
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
 
 tasks.shadowJar {
     archiveFileName = 'PixelProtect.jar'
     relocate 'org.sqlite', 'de.pixelprotect.libs.sqlite'
     relocate 'com.sun.jna', 'de.pixelprotect.libs.jna'
+    relocate 'com.google.gson', 'de.pixelprotect.libs.gson'
+    relocate 'com.zaxxer.hikari', 'de.pixelprotect.libs.hikari'
+    relocate 'com.mysql', 'de.pixelprotect.libs.mysql'
     mergeServiceFiles()
     duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }
 
-tasks.build { dependsOn tasks.shadowJar }
+tasks.build {
+    dependsOn tasks.shadowJar
+}
