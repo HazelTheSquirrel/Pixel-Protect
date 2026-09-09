@@ -124,8 +124,33 @@ public final class DatabaseManager implements AutoCloseable {
     }
 
     public Optional<Owner> findOwner(String endpointId) throws SQLException {
-        if(local){synchronized(localLock){Path f=dataDirectory.resolve("endpoint_owners.jsonl");if(!Files.exists(f))return Optional.empty();Owner found=null;try(BufferedReader r=Files.newBufferedReader(f,StandardCharsets.UTF_8)){String line;while((line=r.readLine())!=null){if(line.isBlank())continue;JsonObject o=JsonParser.parseString(line).getAsJsonObject();if(endpointId.equals(o.get("endpointId").getAsString()))found=gson.fromJson(o.get("owner"),Owner.class);}}catch(IOException|RuntimeException e){throw new SQLException(e);}return Optional.ofNullable(found);}}}
-        try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement("SELECT owner_uuid,owner_name FROM endpoint_owners WHERE endpoint_id=?")){p.setString(1,endpointId);try(ResultSet r=p.executeQuery()){if(r.next())return Optional.of(new Owner(UUID.fromString(r.getString(1)),r.getString(2)));}}return Optional.empty();
+        if (local) {
+            synchronized (localLock) {
+                Path f = dataDirectory.resolve("endpoint_owners.jsonl");
+                if (!Files.exists(f)) return Optional.empty();
+                Owner found = null;
+                try (BufferedReader r = Files.newBufferedReader(f, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = r.readLine()) != null) {
+                        if (line.isBlank()) continue;
+                        JsonObject o = JsonParser.parseString(line).getAsJsonObject();
+                        if (endpointId.equals(o.get("endpointId").getAsString())) {
+                            found = gson.fromJson(o.get("owner"), Owner.class);
+                        }
+                    }
+                } catch (IOException | RuntimeException e) {
+                    throw new SQLException(e);
+                }
+                return Optional.ofNullable(found);
+            }
+        }
+        try (Connection c = dataSource.getConnection(); PreparedStatement p = c.prepareStatement("SELECT owner_uuid,owner_name FROM endpoint_owners WHERE endpoint_id=?")) {
+            p.setString(1, endpointId);
+            try (ResultSet r = p.executeQuery()) {
+                if (r.next()) return Optional.of(new Owner(UUID.fromString(r.getString(1)), r.getString(2)));
+            }
+        }
+        return Optional.empty();
     }
 
     public List<StoredTransfer> findTransfers(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{
