@@ -2,8 +2,11 @@ package de.pixelprotect.service;
 
 import de.pixelprotect.database.DatabaseManager;
 import de.pixelprotect.model.BlockLog;
+import de.pixelprotect.model.Endpoint;
+import de.pixelprotect.model.Owner;
 import de.pixelprotect.model.TransferLog;
 
+import java.time.Instant;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,6 +31,7 @@ public final class AsyncLogQueue implements AutoCloseable {
 
     public void submit(TransferLog log) { offer(log); }
     public void submit(BlockLog log) { offer(log); }
+    public void submitOwnership(OwnershipRecord record) { offer(record); }
 
     private void offer(Object record) {
         if (!accepting.get()) throw new IllegalStateException("Pixel-Protect logging is shutting down");
@@ -65,6 +69,7 @@ public final class AsyncLogQueue implements AutoCloseable {
     private void persist(Object record) throws Exception {
         if (record instanceof TransferLog transfer) database.insertTransfer(transfer);
         else if (record instanceof BlockLog block) database.insertBlock(block);
+        else if (record instanceof OwnershipRecord ownership) database.upsertOwner(ownership.endpointId(), ownership.endpoint(), ownership.owner(), ownership.placedAt());
     }
 
     public int pending() { return queue.size(); }
@@ -85,4 +90,6 @@ public final class AsyncLogQueue implements AutoCloseable {
         Throwable throwable = failure.get();
         if (throwable != null) throw new IllegalStateException("Pixel-Protect logging worker failed", throwable);
     }
+
+    public record OwnershipRecord(String endpointId, Endpoint endpoint, Owner owner, Instant placedAt) {}
 }
