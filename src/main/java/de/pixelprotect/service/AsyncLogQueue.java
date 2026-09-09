@@ -37,14 +37,14 @@ public final class AsyncLogQueue implements AutoCloseable {
         if (!accepting.get()) throw new IllegalStateException("Pixel-Protect logging is shutting down");
         boolean interrupted = false;
         try {
-            while (accepting.get()) {
+            for (;;) {
                 try {
                     if (queue.offer(record, 250, TimeUnit.MILLISECONDS)) return;
+                    if (!accepting.get()) throw new IllegalStateException("Pixel-Protect logging is shutting down");
                 } catch (InterruptedException exception) {
                     interrupted = true;
                 }
             }
-            throw new IllegalStateException("Pixel-Protect logging is shutting down");
         } finally {
             if (interrupted) Thread.currentThread().interrupt();
         }
@@ -52,8 +52,9 @@ public final class AsyncLogQueue implements AutoCloseable {
 
     private void run() {
         for (;;) {
+            Object record = null;
             try {
-                Object record = queue.poll(250, TimeUnit.MILLISECONDS);
+                record = queue.poll(250, TimeUnit.MILLISECONDS);
                 if (record != null) persist(record);
                 if (!accepting.get() && queue.isEmpty()) return;
             } catch (InterruptedException ignored) {
@@ -61,7 +62,16 @@ public final class AsyncLogQueue implements AutoCloseable {
             } catch (Throwable throwable) {
                 failure.compareAndSet(null, throwable);
                 errorHandler.accept(throwable);
-                if (!accepting.get() && queue.isEmpty()) return;
+                if (record != null) {
+                    boolean requeued = false;
+                    while (!requeued) {
+                        try {
+                            requeued = queue.offer(record, 250, TimeUnit.MILLISECONDS);
+                        } catch (InterruptedException ignored) {
+                            if (!accepting.get()) return;
+                        }
+                    }
+                }
             }
         }
     }
@@ -69,7 +79,7 @@ public final class AsyncLogQueue implements AutoCloseable {
     private void persist(Object record) throws Exception {
         if (record instanceof TransferLog transfer) database.insertTransfer(transfer);
         else if (record instanceof BlockLog block) database.insertBlock(block);
-        else if (record instanceof OwnershipRecord ownership) database.upsertOwner(ownership.endpointId(), ownership.endpoint(), ownership.owner(), ownership.placedAt());
+        else if (record instanceof OwnershipRecord ownership) database.persistOwnership(ownership);
     }
 
     public int pending() { return queue.size(); }
@@ -87,9 +97,8 @@ public final class AsyncLogQueue implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted while draining Pixel-Protect logging queue", exception);
         }
-        Throwable throwable = failure.get();
-        if (throwable != null) throw new IllegalStateException("Pixel-Protect logging worker failed", throwable);
+        if (!queue.isEmpty()) throw new IllegalStateException("Pixel-Protect logging queue was not fully drained");
     }
 
-    public record OwnershipRecord(String endpointId, Endpoint endpoint, Owner owner, Instant placedAt) {}
+    public record OwnershipRecord(String endpointId, Endpoint endpoint, Owner owner, Instant placedAt, java.util.UUID incarnationId, boolean active) {}
 }
