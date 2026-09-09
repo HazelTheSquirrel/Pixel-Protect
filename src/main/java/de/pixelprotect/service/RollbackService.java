@@ -2,199 +2,58 @@ package de.pixelprotect.service;
 
 import de.pixelprotect.database.DatabaseManager;
 import de.pixelprotect.model.Endpoint;
+import de.pixelprotect.model.EndpointType;
+import de.pixelprotect.model.TransferLog;
+import de.pixelprotect.util.ForensicGuard;
 import de.pixelprotect.util.ItemCodec;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class RollbackService {
-    private final JavaPlugin plugin;
-    private final DatabaseManager database;
-    private final ItemCodec codec;
+    private final JavaPlugin plugin;private final DatabaseManager database;private final ItemCodec codec;
+    public RollbackService(JavaPlugin plugin,DatabaseManager database,ItemCodec codec){this.plugin=plugin;this.database=database;this.codec=codec;}
+    public void rollback(Player player,String rawId){final String id;try{id=normalize(rawId);}catch(Exception e){player.sendMessage(Component.text("Pixel-Protect: "+e.getMessage(),NamedTextColor.RED));return;}CompletableFuture.supplyAsync(()->{try{return database.findRollbackId(id);}catch(Exception e){throw new IllegalStateException(e);}}).thenAccept(lookup->Bukkit.getScheduler().runTask(plugin,()->apply(player,lookup))).exceptionally(e->{Bukkit.getScheduler().runTask(plugin,()->player.sendMessage(Component.text("Pixel-Protect Rollback fehlgeschlagen: "+root(e).getMessage(),NamedTextColor.RED)));return null;});}
 
-    public RollbackService(JavaPlugin plugin, DatabaseManager database, ItemCodec codec) {
-        this.plugin = plugin;
-        this.database = database;
-        this.codec = codec;
-    }
+    private void apply(Player player,DatabaseManager.RollbackLookup lookup){if(lookup.transfers().isEmpty()&&lookup.blocks().isEmpty()){player.sendMessage(Component.text("Pixel-Protect: Rollback-ID "+lookup.rollbackId()+" wurde nicht gefunden.",NamedTextColor.RED));return;}List<DatabaseManager.StoredTransfer> transfers=lookup.transfers().stream().filter(t->t.rollbackState()==null||t.rollbackState().equals("ACTIVE")).toList();List<DatabaseManager.StoredBlock> blocks=lookup.blocks().stream().filter(b->b.rollbackState()==null||b.rollbackState().equals("ACTIVE")).toList();if(transfers.isEmpty()&&blocks.isEmpty()){player.sendMessage(Component.text("Pixel-Protect: Rollback-ID "+lookup.rollbackId()+" ist bereits abgeschlossen.",NamedTextColor.GRAY));return;}
+        Map<String,InventoryMutation> mutations=new LinkedHashMap<>();List<DatabaseManager.StoredTransfer> groundTransfers=new ArrayList<>();
+        for(DatabaseManager.StoredTransfer t:transfers){if(t.source().type()==EndpointType.GROUND||t.destination().type()==EndpointType.GROUND){groundTransfers.add(t);continue;}addMutation(mutations,t.source(),t.sourceBefore(),t.sourceAfter());addMutation(mutations,t.destination(),t.destinationBefore(),t.destinationAfter());}
+        for(InventoryMutation m:mutations.values())if(!m.preflight()) {finishConflict(player,lookup,"Inventar wurde seit der protokollierten Aktion verändert.",transfers,blocks);return;}
+        for(DatabaseManager.StoredBlock b:blocks){World w=Bukkit.getWorld(b.world());if(w==null||!w.isChunkLoaded(b.x()>>4,b.z()>>4)){finishConflict(player,lookup,"Welt oder Chunk der Blockänderung ist nicht verfügbar.",transfers,blocks);return;}Block target=w.getBlockAt(b.x(),b.y(),b.z());if(!target.getBlockData().getAsString().equals(b.afterData())){finishConflict(player,lookup,"Block wurde seit der protokollierten Aktion verändert.",transfers,blocks);return;}}
+        List<Applied> applied=new ArrayList<>();try(ForensicGuard.Scope ignored=ForensicGuard.enter()){
+            for(InventoryMutation m:mutations.values()){m.restoreBefore();applied.add(m);}
+            for(DatabaseManager.StoredTransfer t:groundTransfers)restoreGround(t);
+            for(DatabaseManager.StoredBlock b:blocks)restoreBlock(b);
+        }catch(Exception e){try(ForensicGuard.Scope ignored=ForensicGuard.enter()){for(Applied a:applied)a.restoreAfter();}catch(Exception ignored){}finishConflict(player,lookup,"Rollback konnte nicht atomar angewendet werden.",transfers,blocks);return;}
+        CompletableFuture.runAsync(()->{for(DatabaseManager.StoredTransfer t:transfers){try{database.markTransferRolledBack(t.id(),"ROLLED_BACK");}catch(Exception ignored){}}for(DatabaseManager.StoredBlock b:blocks){try{database.markBlockRolledBack(b.id(),"ROLLED_BACK");}catch(Exception ignored){}}});player.sendMessage(Component.text("________________________________________________________________________________\nPixel-Protect Rollback "+lookup.rollbackId()+" abgeschlossen. "+transfers.size()+" Transferzeilen, "+blocks.size()+" Blockänderungen zurückgesetzt.\n________________________________________________________________________________",NamedTextColor.GREEN));}
 
-    public void rollback(Player player, String rawRollbackId) {
-        final String normalized;
-        try {
-            normalized = normalize(rawRollbackId);
-        } catch (IllegalArgumentException exception) {
-            player.sendMessage(Component.text("Pixel-Protect: " + exception.getMessage()));
-            return;
-        }
+    private void finishConflict(Player p,DatabaseManager.RollbackLookup lookup,String reason,List<DatabaseManager.StoredTransfer>t,List<DatabaseManager.StoredBlock>b){CompletableFuture.runAsync(()->{for(DatabaseManager.StoredTransfer x:t)try{database.markTransferRolledBack(x.id(),"CONFLICT");}catch(Exception ignored){}for(DatabaseManager.StoredBlock x:b)try{database.markBlockRolledBack(x.id(),"CONFLICT");}catch(Exception ignored){}});p.sendMessage(Component.text("________________________________________________________________________________\nPixel-Protect Rollback "+lookup.rollbackId()+" abgebrochen: "+reason+"\nKeine Änderung wurde angewendet.\n________________________________________________________________________________",NamedTextColor.RED));}
 
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return database.findRollbackId(normalized);
-            } catch (Exception exception) {
-                throw new RuntimeException(exception);
-            }
-        }).thenAccept(lookup -> Bukkit.getScheduler().runTask(plugin, () -> apply(player, lookup)))
-                .exceptionally(exception -> {
-                    Bukkit.getScheduler().runTask(plugin, () -> player.sendMessage(
-                            Component.text("Pixel-Protect Rollback fehlgeschlagen: " + root(exception).getMessage())));
-                    return null;
-                });
-    }
+    private void addMutation(Map<String,InventoryMutation> map,Endpoint ep,String before,String after){if(ep.type()==EndpointType.GROUND||before==null||after==null)return;String key=ep.identity();InventoryMutation existing=map.get(key);if(existing==null)map.put(key,new InventoryMutation(ep,before,after));else if(!existing.before.equals(before)||!existing.after.equals(after))throw new IllegalStateException("Inconsistent transaction snapshots for "+key);}
+    private void restoreBlock(DatabaseManager.StoredBlock b){World w=Bukkit.getWorld(b.world());Block block=w.getBlockAt(b.x(),b.y(),b.z());block.setBlockData(Bukkit.createBlockData(b.beforeData()),false);if(b.beforeInventory()!=null&&block.getState() instanceof InventoryHolder h)codec.restore(h.getInventory(),b.beforeInventory());}
+    private void restoreGround(DatabaseManager.StoredTransfer t){Endpoint source=t.source().type()==EndpointType.GROUND?t.source():t.destination();Endpoint destination=t.source().type()==EndpointType.GROUND?t.destination():t.source();World w=Bukkit.getWorld(source.world());if(w==null)return;Entity existing=source.entityId()==null?null:Bukkit.getEntity(source.entityId());if(destination.type()==EndpointType.GROUND){if(existing!=null)existing.remove();return;}if(existing instanceof Item item){item.setItemStack(codec.decode(t.items().getFirst().itemData()));return;}Location loc=new Location(w,source.x()+0.5,source.y()+0.25,source.z()+0.5);for(TransferLog.ItemChange c:t.items()){ItemStack stack=codec.decode(c.itemData());stack.setAmount(c.amount());w.dropItem(loc,stack);}}
 
-    private void apply(Player player, DatabaseManager.RollbackLookup lookup) {
-        if (!player.isOnline()) return;
-
-        List<UUID> transactionIds = new ArrayList<>();
-        lookup.transfers().forEach(t -> { if (!transactionIds.contains(t.transactionId())) transactionIds.add(t.transactionId()); });
-        lookup.blocks().forEach(b -> { if (!transactionIds.contains(b.transactionId())) transactionIds.add(b.transactionId()); });
-
-        if (transactionIds.isEmpty()) {
-            player.sendMessage(Component.text("Pixel-Protect: Rollback-ID " + lookup.rollbackId() + " wurde nicht gefunden."));
-            return;
-        }
-        if (transactionIds.size() > 1) {
-            player.sendMessage(Component.text("Pixel-Protect: Rollback-ID " + lookup.rollbackId() + " ist nicht eindeutig. Bitte eine neue ID verwenden."));
-            return;
-        }
-
-        List<Event> events = new ArrayList<>();
-        lookup.transfers().stream().filter(t -> "ACTIVE".equals(t.rollbackState())).map(TransferEvent::new).forEach(events::add);
-        lookup.blocks().stream().filter(b -> "ACTIVE".equals(b.rollbackState())).map(BlockEvent::new).forEach(events::add);
-        events.sort(Comparator.comparing(Event::timestamp).reversed());
-
-        if (events.isEmpty()) {
-            player.sendMessage(Component.text("Pixel-Protect: Rollback-ID " + lookup.rollbackId() + " ist bereits zurückgerollt oder enthält keine aktiven Änderungen."));
-            return;
-        }
-
-        int transfers = 0;
-        int blocks = 0;
-        int conflicts = 0;
-        for (Event event : events) {
-            try {
-                if (event instanceof TransferEvent transferEvent) {
-                    if (reverse(transferEvent.value())) {
-                        database.markTransferRolledBack(transferEvent.value().id(), "ROLLED_BACK");
-                        transfers++;
-                    } else {
-                        database.markTransferRolledBack(transferEvent.value().id(), "CONFLICT");
-                        conflicts++;
-                    }
-                } else if (event instanceof BlockEvent blockEvent) {
-                    if (reverseBlock(blockEvent.value())) {
-                        database.markBlockRolledBack(blockEvent.value().id(), "ROLLED_BACK");
-                        blocks++;
-                    } else {
-                        database.markBlockRolledBack(blockEvent.value().id(), "CONFLICT");
-                        conflicts++;
-                    }
-                }
-            } catch (Exception exception) {
-                try {
-                    if (event instanceof TransferEvent transferEvent) database.markTransferRolledBack(transferEvent.value().id(), "ERROR");
-                    else if (event instanceof BlockEvent blockEvent) database.markBlockRolledBack(blockEvent.value().id(), "ERROR");
-                } catch (Exception ignored) { }
-                conflicts++;
-            }
-        }
-
-        player.sendMessage(Component.text("Pixel-Protect Rollback " + lookup.rollbackId() + " abgeschlossen: "
-                + transfers + " Item-Transfers, " + blocks + " Blockänderungen, " + conflicts + " Konflikte."));
-    }
-
-    private boolean reverse(DatabaseManager.StoredTransfer transfer) {
-        Inventory source = inventory(transfer.source());
-        Inventory destination = inventory(transfer.destination());
-        if (source == null || destination == null) return false;
-
-        ItemStack item = codec.decode(transfer.itemData());
-        item.setAmount(transfer.amount());
-
-        ItemStack remove = item.clone();
-        Map<Integer, ItemStack> leftovers = destination.removeItemAnySlot(remove);
-        int remaining = leftovers.values().stream().mapToInt(ItemStack::getAmount).sum();
-        if (remaining > 0) {
-            destination.addItem(remove);
-            return false;
-        }
-
-        Map<Integer, ItemStack> sourceLeft = source.addItem(item);
-        if (!sourceLeft.isEmpty()) {
-            destination.addItem(item);
-            return false;
-        }
-        return true;
-    }
-
-    private boolean reverseBlock(DatabaseManager.StoredBlock block) {
-        World world = Bukkit.getWorld(block.world());
-        if (world == null) return false;
-        Block target = world.getBlockAt(block.x(), block.y(), block.z());
-        if (!target.getBlockData().getAsString().equals(block.afterData())) return false;
-        try {
-            target.setBlockData(Bukkit.createBlockData(block.beforeData()), false);
-            return true;
-        } catch (IllegalArgumentException exception) {
-            return false;
-        }
-    }
-
-    private Inventory inventory(Endpoint endpoint) {
-        return switch (endpoint.type()) {
-            case PLAYER -> {
-                Player player = endpoint.playerId() == null ? null : Bukkit.getPlayer(endpoint.playerId());
-                yield player == null ? null : player.getInventory();
-            }
-            case BLOCK_CONTAINER -> {
-                World world = endpoint.world() == null ? null : Bukkit.getWorld(endpoint.world());
-                if (world == null) yield null;
-                Block block = world.getBlockAt(endpoint.x(), endpoint.y(), endpoint.z());
-                yield block.getState() instanceof InventoryHolder holder ? holder.getInventory() : null;
-            }
-            case MINECART -> {
-                Entity entity = endpoint.entityId() == null ? null : Bukkit.getEntity(endpoint.entityId());
-                yield entity instanceof InventoryHolder holder ? holder.getInventory() : null;
-            }
-            default -> null;
-        };
-    }
-
-    private static String normalize(String raw) {
-        if (raw == null) throw new IllegalArgumentException("Rollback-ID fehlt. Beispiel: #A7F31");
-        String id = raw.trim().toUpperCase(java.util.Locale.ROOT);
-        if (!id.startsWith("#")) id = "#" + id;
-        if (!id.matches("#[0-9A-F]{5}")) throw new IllegalArgumentException("Ungueltige Rollback-ID. Beispiel: #A7F31");
-        return id;
-    }
-
-    private static Throwable root(Throwable throwable) {
-        while (throwable.getCause() != null) throwable = throwable.getCause();
-        return throwable;
-    }
-
-    private sealed interface Event permits TransferEvent, BlockEvent {
-        java.time.Instant timestamp();
-    }
-
-    private record TransferEvent(DatabaseManager.StoredTransfer value) implements Event {
-        @Override public java.time.Instant timestamp() { return value.timestamp(); }
-    }
-
-    private record BlockEvent(DatabaseManager.StoredBlock value) implements Event {
-        @Override public java.time.Instant timestamp() { return value.timestamp(); }
-    }
+    private final class InventoryMutation implements Applied{final Endpoint endpoint;final String before,after;Inventory inventory;InventoryMutation(Endpoint endpoint,String before,String after){this.endpoint=endpoint;this.before=before;this.after=after;}boolean preflight(){inventory=inventory(endpoint);return inventory!=null&&codec.hashSnapshot(codec.snapshot(inventory)).equals(codec.hashSnapshot(after));}void restoreBefore(){codec.restore(inventory,before);}void restoreAfter(){codec.restore(inventory,after);}}
+    private interface Applied{void restoreAfter();}
+    private Inventory inventory(Endpoint ep){return switch(ep.type()){case PLAYER->{Player p=ep.playerId()==null?null:Bukkit.getPlayer(ep.playerId());yield p==null?null:p.getInventory();}case BLOCK_CONTAINER->{World w=ep.world()==null?null:Bukkit.getWorld(ep.world());if(w==null)yield null;Block b=w.getBlockAt(ep.x(),ep.y(),ep.z());yield b.getState() instanceof InventoryHolder h?h.getInventory():null;}case MINECART->{Entity e=ep.entityId()==null?null:Bukkit.getEntity(ep.entityId());yield e instanceof InventoryHolder h?h.getInventory():null;}default->null;};}
+    private static String normalize(String raw){String id=raw==null?"":raw.trim().toUpperCase(java.util.Locale.ROOT);if(!id.startsWith("#"))id="#"+id;if(!id.matches("#[0-9A-F]{10}"))throw new IllegalArgumentException("Ungültige Rollback-ID. Beispiel: #00000000A7");return id;}
+    private static Throwable root(Throwable e){while(e.getCause()!=null)e=e.getCause();return e;}
 }
