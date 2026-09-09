@@ -138,21 +138,15 @@ public final class DatabaseManager implements AutoCloseable {
                     while ((line = r.readLine()) != null) {
                         if (line.isBlank()) continue;
                         JsonObject o = JsonParser.parseString(line).getAsJsonObject();
-                        if (endpointId.equals(o.get("endpointId").getAsString())) {
-                            found = gson.fromJson(o.get("owner"), Owner.class);
-                        }
+                        if (endpointId.equals(o.get("endpointId").getAsString())) found = gson.fromJson(o.get("owner"), Owner.class);
                     }
-                } catch (IOException | RuntimeException e) {
-                    throw new SQLException(e);
-                }
+                } catch (IOException | RuntimeException e) { throw new SQLException(e); }
                 return Optional.ofNullable(found);
             }
         }
         try (Connection c = dataSource.getConnection(); PreparedStatement p = c.prepareStatement("SELECT owner_uuid,owner_name FROM endpoint_owners WHERE endpoint_id=?")) {
             p.setString(1, endpointId);
-            try (ResultSet r = p.executeQuery()) {
-                if (r.next()) return Optional.of(new Owner(UUID.fromString(r.getString(1)), r.getString(2)));
-            }
+            try (ResultSet r = p.executeQuery()) { if (r.next()) return Optional.of(new Owner(UUID.fromString(r.getString(1)), r.getString(2))); }
         }
         return Optional.empty();
     }
@@ -165,6 +159,54 @@ public final class DatabaseManager implements AutoCloseable {
     public List<StoredBlock> findBlocks(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{
         if(local)return localBlocks(world,cx,cy,cz,radius,since,limit);
         String sql="SELECT * FROM block_logs WHERE created_at>=? AND world=? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ? ORDER BY id DESC LIMIT ?";List<StoredBlock> out=new ArrayList<>();int minX=(int)Math.floor(cx-radius),maxX=(int)Math.ceil(cx+radius),minY=(int)Math.floor(cy-radius),maxY=(int)Math.ceil(cy+radius),minZ=(int)Math.floor(cz-radius),maxZ=(int)Math.ceil(cz+radius);try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setTimestamp(1,Timestamp.from(since));p.setString(2,world);p.setInt(3,minX);p.setInt(4,maxX);p.setInt(5,minY);p.setInt(6,maxY);p.setInt(7,minZ);p.setInt(8,maxZ);p.setInt(9,limit);try(ResultSet r=p.executeQuery()){while(r.next())out.add(readBlock(r));}}return out;
+    }
+
+    public RollbackLookup findRollbackId(String rawId) throws SQLException {
+        String id = normalizeRollbackId(rawId);
+        if (local) return localRollbackLookup(id);
+        String prefix = id.substring(1).toLowerCase(Locale.ROOT) + "%";
+        List<StoredTransfer> transfers = new ArrayList<>();
+        List<StoredBlock> blocks = new ArrayList<>();
+        try (Connection c = dataSource.getConnection()) {
+            try (PreparedStatement p = c.prepareStatement("SELECT * FROM transfer_logs WHERE LOWER(REPLACE(transaction_id,'-','')) LIKE ? ORDER BY id ASC")) {
+                p.setString(1, prefix);
+                try (ResultSet r = p.executeQuery()) { while (r.next()) transfers.add(readTransfer(r)); }
+            }
+            try (PreparedStatement p = c.prepareStatement("SELECT * FROM block_logs WHERE LOWER(REPLACE(transaction_id,'-','')) LIKE ? ORDER BY id ASC")) {
+                p.setString(1, prefix);
+                try (ResultSet r = p.executeQuery()) { while (r.next()) blocks.add(readBlock(r)); }
+            }
+        }
+        return new RollbackLookup(id, transfers, blocks);
+    }
+
+    private RollbackLookup localRollbackLookup(String id) throws SQLException {
+        String prefix = id.substring(1).toUpperCase(Locale.ROOT);
+        List<StoredTransfer> transfers = new ArrayList<>();
+        List<StoredBlock> blocks = new ArrayList<>();
+        synchronized (localLock) {
+            Path tf = dataDirectory.resolve("transfer_logs.jsonl");
+            if (Files.exists(tf)) {
+                try (BufferedReader r=Files.newBufferedReader(tf,StandardCharsets.UTF_8)) {
+                    String line; while((line=r.readLine())!=null){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();String tx=o.get("transactionId").getAsString().replace("-","").toUpperCase(Locale.ROOT);if(tx.startsWith(prefix))transfers.add(readLocalTransfer(o));}catch(RuntimeException ignored){}}
+                } catch(IOException e){throw new SQLException(e);}
+            }
+            Path bf = dataDirectory.resolve("block_logs.jsonl");
+            if (Files.exists(bf)) {
+                try (BufferedReader r=Files.newBufferedReader(bf,StandardCharsets.UTF_8)) {
+                    String line; while((line=r.readLine())!=null){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();String tx=o.get("transactionId").getAsString().replace("-","").toUpperCase(Locale.ROOT);if(tx.startsWith(prefix))blocks.add(readLocalBlock(o));}catch(RuntimeException ignored){}}
+                } catch(IOException e){throw new SQLException(e);}
+            }
+        }
+        return new RollbackLookup(id, transfers, blocks);
+    }
+
+    private static String normalizeRollbackId(String raw) throws SQLException {
+        if (raw == null) throw new SQLException("Rollback-ID fehlt.");
+        String id = raw.trim().toUpperCase(Locale.ROOT);
+        if (!id.startsWith("#")) id = "#" + id;
+        if (!id.matches("#[0-9A-F]{5}")) throw new SQLException("Ungueltige Rollback-ID. Erwartet wird z.B. #A7F31.");
+        return id;
     }
 
     public void markTransferRolledBack(long id,String state)throws SQLException{if(local){updateState(dataDirectory.resolve("transfer_logs.jsonl"),id,state);return;}try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement("UPDATE transfer_logs SET rollback_state=? WHERE id=?")){p.setString(1,state);p.setLong(2,id);p.executeUpdate();}}
@@ -193,6 +235,7 @@ public final class DatabaseManager implements AutoCloseable {
     private static void addUuid(JsonObject o,String key,UUID value){if(value==null)o.add(key,com.google.gson.JsonNull.INSTANCE);else o.addProperty(key,value.toString());}
     private static UUID nullableUuid(String s){return s==null?null:UUID.fromString(s);}
 
+    public record RollbackLookup(String rollbackId,List<StoredTransfer> transfers,List<StoredBlock> blocks) {}
     public record StoredTransfer(long id,Instant timestamp,UUID transactionId,UUID chainId,UUID actorUuid,String actorName,UUID attributionUuid,String attributionName,Endpoint source,Endpoint destination,String itemKey,String itemData,int amount,String action,String rollbackState){}
     public record StoredBlock(long id,Instant timestamp,UUID transactionId,UUID playerUuid,String playerName,String world,int x,int y,int z,String beforeData,String afterData,String action,String blockType,String rollbackState){}
     @Override public void close(){if(dataSource!=null)dataSource.close();}
