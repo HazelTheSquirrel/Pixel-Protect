@@ -52,5 +52,5 @@ public final class TransferService {
     private CompletableFuture<Optional<Owner>> resolveAttribution(Endpoint endpoint){return ownership.resolve(endpoint).exceptionally(ex->Optional.empty());}
     private void submitTransfer(TransferLog log){try{queue.submit(log);}catch(RuntimeException ignored){}}
     private static ItemStack[] cloneContents(ItemStack[] contents){ItemStack[] out=new ItemStack[contents.length];for(int i=0;i<contents.length;i++)out[i]=contents[i]==null?null:contents[i].clone();return out;}
-    private static String name(UUID uuid){Player p=Bukkit.getPlayer(uuid);return p==null?uuid.toString():p.getName();}
+    private String name(UUID uuid){Player player=Bukkit.getPlayer(uuid);return player==null?uuid.toString():player.getName();}
 }
