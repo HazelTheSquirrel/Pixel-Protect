@@ -96,16 +96,19 @@ public final class SelectorParser {
             boolean positive = value.startsWith("+");
             String normalized = negative || positive ? value.substring(1) : value;
             Set<ActionType> target = negative ? exclude : include;
+            if (normalized.equals("+block") || normalized.equals("-block")) normalized = "block";
             switch (normalized) {
-                case "block" -> { target.add(ActionType.BREAK); target.add(ActionType.PLACE); }
+                case "block" -> {
+                    if (positive) target.add(ActionType.PLACE);
+                    else if (negative) target.add(ActionType.BREAK);
+                    else { target.add(ActionType.BREAK); target.add(ActionType.PLACE); }
+                }
                 case "container" -> target.add(ActionType.CONTAINER);
                 case "inventory" -> target.add(ActionType.INVENTORY);
                 case "item" -> { target.add(ActionType.ITEM_DROP); target.add(ActionType.ITEM_PICKUP); target.add(ActionType.ITEM_DESPAWN); }
                 case "kill" -> target.add(ActionType.ENTITY_DEATH);
                 case "spawn" -> target.add(ActionType.ENTITY_SPAWN);
-                case "session" -> target.add(ActionType.SESSION);
-                case "login" -> target.add(ActionType.SESSION);
-                case "logout" -> target.add(ActionType.SESSION);
+                case "session", "login", "logout" -> target.add(ActionType.SESSION);
                 case "chat" -> target.add(ActionType.CHAT);
                 case "click", "interact" -> { target.add(ActionType.INTERACT); target.add(ActionType.ENTITY_INTERACT); }
                 case "command" -> target.add(ActionType.COMMAND);
