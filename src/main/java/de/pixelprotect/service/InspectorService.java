@@ -40,28 +40,14 @@ public final class InspectorService {
         if (result.error!=null) { player.sendMessage(Component.text("Pixel-Protect: Lookup fehlgeschlagen: "+result.error.getMessage(),NamedTextColor.RED)); return; }
         if (result.blocks.isEmpty()&&result.transfers.isEmpty()) { player.sendMessage(Component.text("Pixel-Protect: Keine Forensik-Einträge gefunden.",NamedTextColor.YELLOW)); return; }
         player.sendMessage(Component.text("Pixel-Protect Forensik",NamedTextColor.GOLD));
-        record Tx(UUID id,List<DatabaseManager.StoredTransfer> transfers,List<DatabaseManager.StoredBlock> blocks) {}
         Map<UUID,Tx> grouped=new LinkedHashMap<>();
-        result.blocks.forEach(b->grouped.computeIfAbsent(b.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).blocks().add(b));
-        result.transfers.forEach(t->grouped.computeIfAbsent(t.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).transfers().add(t));
-        grouped.values().stream().sorted(Comparator.comparing(this::txTimestamp).reversed()).limit(limit).forEach(tx->{
-            player.sendMessage(Component.text("["+rollbackId(tx.id())+"]",NamedTextColor.AQUA));
-            tx.blocks().forEach(b->sendBlock(player,b.log()));
-            tx.transfers().forEach(t->sendTransfer(player,t.log()));
+        result.blocks.forEach(b->grouped.computeIfAbsent(b.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).blocks.add(b));
+        result.transfers.forEach(t->grouped.computeIfAbsent(t.log().transactionId(),k->new Tx(k,new ArrayList<>(),new ArrayList<>())).transfers.add(t));
+        grouped.values().stream().sorted(Comparator.comparing(Tx::timestamp).reversed()).limit(limit).forEach(tx->{
+            player.sendMessage(Component.text("["+rollbackId(tx.id)+"]",NamedTextColor.AQUA));
+            tx.blocks.forEach(b->sendBlock(player,b.log()));
+            tx.transfers.forEach(t->sendTransfer(player,t.log()));
         });
-    }
-
-    private Instant txTimestamp(Object tx){
-        @SuppressWarnings("unchecked")
-        var value=(Record)tx;
-        try {
-            var blocks=(List<DatabaseManager.StoredBlock>)value.getClass().getDeclaredMethod("blocks").invoke(value);
-            var transfers=(List<DatabaseManager.StoredTransfer>)value.getClass().getDeclaredMethod("transfers").invoke(value);
-            Instant latest=Instant.MIN;
-            for(var b:blocks)latest=latest.isAfter(b.log().timestamp())?latest:b.log().timestamp();
-            for(var t:transfers)latest=latest.isAfter(t.log().timestamp())?latest:t.log().timestamp();
-            return latest;
-        } catch (ReflectiveOperationException e) { return Instant.MIN; }
     }
 
     private void sendBlock(Player p, BlockLog l) {
@@ -87,6 +73,12 @@ public final class InspectorService {
     private static String location(Endpoint e){return e.world()==null?label(e):e.world()+" "+e.x()+" "+e.y()+" "+e.z();}
     public static String rollbackId(UUID tx){return "#"+tx.toString().replace("-","").substring(0,5).toUpperCase(Locale.ROOT);}
 
+    private static final class Tx {
+        private final UUID id; private final List<DatabaseManager.StoredTransfer> transfers; private final List<DatabaseManager.StoredBlock> blocks;
+        private Tx(UUID id,List<DatabaseManager.StoredTransfer> transfers,List<DatabaseManager.StoredBlock> blocks){this.id=id;this.transfers=transfers;this.blocks=blocks;}
+        private UUID id(){return id;}
+        private Instant timestamp(){Instant latest=Instant.MIN;for(var b:blocks)if(b.log().timestamp().isAfter(latest))latest=b.log().timestamp();for(var t:transfers)if(t.log().timestamp().isAfter(latest))latest=t.log().timestamp();return latest;}
+    }
     private static final class CompletableLookup {
         private final DatabaseManager db; private final String world; private final int x,y,z,limit;
         private CompletableLookup(DatabaseManager db,String world,int x,int y,int z,int limit){this.db=db;this.world=world;this.x=x;this.y=y;this.z=z;this.limit=limit;}
