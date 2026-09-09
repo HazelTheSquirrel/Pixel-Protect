@@ -9,6 +9,7 @@ public record TransferLog(
         long sequence,
         UUID transactionId,
         UUID chainId,
+        String rollbackId,
         UUID actorUuid,
         String actorName,
         UUID attributionUuid,
