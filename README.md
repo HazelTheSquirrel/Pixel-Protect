@@ -1,8 +1,20 @@
 # Pixel-Protect
 
-Pixel-Protect is a standalone, Paper 26.2-native forensic logging and anti-griefing plugin. It records world changes, containers, player inventories, entities and player activity, then provides asynchronous inspection, lookup, conflict-safe rollback, restore and retention workflows.
+Pixel-Protect is a standalone, Paper 26.2-native forensic logging and anti-griefing platform. It records world changes, containers, player inventories, entities and player activity, then provides asynchronous inspection, lookup, conflict-safe rollback, restore and retention workflows.
+
+Pixel-Protect is an **independent project with its own architecture, data model, command model and implementation**. It is not a fork, port, compatibility layer or source-derived implementation of another audit plugin. The project is developed from its own requirements and uses only the public APIs and libraries explicitly declared by this repository.
 
 The project is deliberately independent of PixelRPG and uses `/pixelprotect` as its only command root.
+
+## Project principles
+
+Pixel-Protect is designed around a few hard boundaries:
+
+- **Independent implementation:** no source code, copied implementation details or proprietary assets from third-party audit plugins are used.
+- **Public APIs only:** Paper APIs, Mojang mappings and explicitly declared public integration APIs are used; no CraftBukkit or versioned NMS internals.
+- **Forensic first:** historical records are immutable evidence, while live world state remains authoritative for conflict-safe recovery.
+- **Asynchronous by design:** database work and expensive analysis never run inside the event/region thread.
+- **Own data model:** Pixel-Protect's audit records, transaction model, rollback jobs, selectors and persistence schema are designed specifically for this project.
 
 ## Platform contract
 
@@ -59,13 +71,13 @@ The forensic model covers entity spawn/removal/death/damage, projectiles, droppe
 
 Pixel-Protect records sessions, world changes, commands, chat, interactions, entity interactions, sign edits and related player activity. Activity records are intentionally not treated as block rollback transitions.
 
-## WorldEdit / FAWE-compatible edit logging
+## WorldEdit integration
 
 WorldEdit is optional. When installed, Pixel-Protect registers a public WorldEdit `EditSessionEvent` extent wrapper at the history stage. The wrapper captures successful block transitions, attributes them to the WorldEdit actor, groups the edit session under a transaction UUID and sends the resulting records through the normal Pixel-Protect audit queue.
 
 The integration is compile-time optional and is not shaded into Pixel-Protect. This keeps the standalone plugin usable when WorldEdit is absent while providing the same forensic path when WorldEdit is installed.
 
-The extent-level integration is also compatible with WorldEdit-based asynchronous editing stacks that preserve the public WorldEdit edit-session event path, including supported FAWE configurations.
+The extent-level integration can also observe WorldEdit-based asynchronous editing stacks that preserve the public WorldEdit edit-session event path, subject to the integration behavior of the installed editing stack.
 
 ## Inspector
 
@@ -117,7 +129,7 @@ Durations support seconds, minutes, hours, days, weeks and decimal values such a
 /pixelprotect undo <job>
 ```
 
-Rollback is a persisted asynchronous job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler.
+Rollback is a persisted asynchronous recovery job. Database selection happens off-thread; world mutations are scheduled through Paper's region/global scheduler.
 
 Before a mutation is applied, Pixel-Protect checks the live post-state against the state recorded by the audit entry. If another change has already altered that location, the historical mutation is skipped rather than overwriting newer world state.
 
@@ -201,21 +213,14 @@ The build targets Java 25 and the Paper 26.2 build 121 development bundle. The C
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the threading, persistence and rollback model.
 
-See [`docs/FORENSIC_PARITY.md`](docs/FORENSIC_PARITY.md) for the repository-level forensic comparison against the current public CoreProtect implementation and documentation.
+## Project identity
 
-## CoreProtect parity
+Pixel-Protect is intended to stand on its own as an independent Minecraft forensic and recovery system. Similarities in broad functionality are a consequence of solving the same general server-administration problem; the implementation, internal abstractions, persistence model and project documentation are maintained independently.
 
-Pixel-Protect is intentionally not a source fork of CoreProtect. The goal is functional forensic parity while using a Paper-26.2-native architecture.
-
-The current implementation covers the CoreProtect forensic core: block history, container/inventory auditing, entity/player activity, inspector, lookup filters, preview, persistent rollback, restore/undo, retention, multi-world operation, public API support and WorldEdit edit-session logging.
-
-CoreProtect remains ahead in several product/operational areas, including DuckDB/ClickHouse storage, database migration tooling, consumer pause/resume, per-world override files, localization packs, automatic update/error reporting, clickable pagination and more granular lookup permission enforcement. Those differences are documented explicitly rather than hidden behind compatibility claims.
+For contributors, the rule is simple: **do not copy source code, implementation-specific text, proprietary assets or non-public material from other projects into Pixel-Protect.** When researching a capability, derive the requirement independently and implement it against the current Paper/WorldEdit public APIs and Pixel-Protect's own architecture.
 
 ## References
 
-- [CoreProtect](https://github.com/PlayPro/CoreProtect)
-- [CoreProtect command reference](https://github.com/PlayPro/CoreProtect/blob/master/docs/commands.md)
-- [CoreProtect configuration reference](https://github.com/PlayPro/CoreProtect/blob/master/docs/config.md)
-- [CoreProtect API](https://github.com/PlayPro/CoreProtect/blob/master/docs/api/index.md)
+- [Paper](https://papermc.io/)
 - [WorldEdit](https://github.com/EngineHub/WorldEdit)
 - [WorldEdit edit-session API](https://worldedit.enginehub.org/en/7.3.19/api/concepts/edit-sessions/)
