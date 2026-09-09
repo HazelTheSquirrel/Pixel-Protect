@@ -10,5 +10,5 @@ public record Endpoint(EndpointType type,UUID entityId,UUID playerId,String worl
     public static Endpoint ground(Location l){return ground(null,l);}
     public static Endpoint ground(UUID entity,Location l){return new Endpoint(EndpointType.GROUND,entity,null,l.getWorld().getName(),l.getBlockX(),l.getBlockY(),l.getBlockZ(),"Boden");}
     public static Endpoint system(){return new Endpoint(EndpointType.SYSTEM,null,null,null,0,0,0,"System");}
-    public String identity(){return switch(type){case PLAYER->"player:"+playerId;case BLOCK_CONTAINER->"block:"+world+":"+x+":"+y+":"+z;case MINECART->"entity:"+entityId;case GROUND->entityId==null?"ground:"+world+":"+x+":"+y+":"+z:"+entityId:"ground:"+entityId;case SYSTEM->"system";};}
+    public String identity(){return switch(type){case PLAYER->"player:"+playerId;case BLOCK_CONTAINER->"block:"+world+":"+x+":"+y+":"+z;case MINECART->"entity:"+entityId;case GROUND->entityId==null?"ground:"+world+":"+x+":"+y+":"+z:"+"none":"ground:"+entityId;case SYSTEM->"system";};}
 }
