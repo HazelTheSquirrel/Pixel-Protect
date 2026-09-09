@@ -4,13 +4,13 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import de.pixelprotect.model.BlockLog;
 import de.pixelprotect.model.Endpoint;
 import de.pixelprotect.model.EndpointType;
 import de.pixelprotect.model.Owner;
 import de.pixelprotect.model.TransferLog;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -40,7 +41,7 @@ public final class DatabaseManager implements AutoCloseable {
 
     public DatabaseManager(Path dataDirectory, String mode, boolean fallbackToLocal, String host, int port, String database, String username, String password, int poolSize) {
         this.dataDirectory = dataDirectory;
-        this.mode = mode == null ? "local" : mode.toLowerCase(java.util.Locale.ROOT);
+        this.mode = mode == null ? "local" : mode.toLowerCase(Locale.ROOT);
         this.fallbackToLocal = fallbackToLocal;
         if (!this.mode.equals("local")) {
             HikariConfig config = new HikariConfig();
@@ -51,7 +52,6 @@ public final class DatabaseManager implements AutoCloseable {
             config.setMinimumIdle(Math.min(2, poolSize));
             config.setConnectionTimeout(5000);
             config.setValidationTimeout(3000);
-            config.setLeakDetectionThreshold(15000);
             config.setPoolName("PixelProtect-MySQL");
             config.addDataSourceProperty("cachePrepStmts", "true");
             config.addDataSourceProperty("prepStmtCacheSize", "250");
@@ -145,26 +145,26 @@ public final class DatabaseManager implements AutoCloseable {
     private void appendBlock(long id,BlockLog l)throws SQLException{JsonObject o=new JsonObject();o.addProperty("id",id);o.addProperty("timestamp",l.timestamp().toEpochMilli());o.addProperty("transactionId",l.transactionId().toString());o.addProperty("playerUuid",l.playerUuid().toString());o.addProperty("playerName",l.playerName());o.addProperty("world",l.world());o.addProperty("x",l.x());o.addProperty("y",l.y());o.addProperty("z",l.z());o.addProperty("beforeData",l.beforeData());o.addProperty("afterData",l.afterData());o.addProperty("action",l.action());o.addProperty("blockType",l.blockType());o.addProperty("rollbackState","ACTIVE");append(dataDirectory.resolve("block_logs.jsonl"),o);}
     private void append(Path file,JsonObject o)throws SQLException{try(BufferedWriter w=Files.newBufferedWriter(file,StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.WRITE,StandardOpenOption.APPEND)){w.write(gson.toJson(o));w.newLine();}catch(IOException e){throw new SQLException(e);}}
 
-    private List<StoredTransfer> localTransfers(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{synchronized(localLock){List<StoredTransfer> out=new ArrayList<>();Path f=dataDirectory.resolve("transfer_logs.jsonl");if(!Files.exists(f))return out;try(BufferedReader r=Files.newBufferedReader(f,StandardCharsets.UTF_8)){String line;while((line=r.readLine())!=null&&out.size()<limit){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();StoredTransfer t=readLocalTransfer(o);if(t.timestamp().isBefore(since)||!near(t.source(),world,cx,cy,cz,radius)&&!near(t.destination(),world,cx,cy,cz,radius))continue;out.add(t);}catch(RuntimeException ignored){}}}catch(IOException e){throw new SQLException(e);}out.sort(Comparator.comparing(StoredTransfer::id).reversed());return out;}}
-    private List<StoredBlock> localBlocks(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{synchronized(localLock){List<StoredBlock> out=new ArrayList<>();Path f=dataDirectory.resolve("block_logs.jsonl");if(!Files.exists(f))return out;try(BufferedReader r=Files.newBufferedReader(f,StandardCharsets.UTF_8)){String line;while((line=r.readLine())!=null){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();StoredBlock b=readLocalBlock(o);if(b.timestamp().isBefore(since)||!near(b.world(),b.x(),b.y(),b.z(),world,cx,cy,cz,radius))continue;out.add(b);}catch(RuntimeException ignored){}}}catch(IOException e){throw new SQLException(e);}out.sort(Comparator.comparing(StoredBlock::id).reversed());if(out.size()>limit)return new ArrayList<>(out.subList(0,limit));return out;}}
+    private List<StoredTransfer> localTransfers(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{synchronized(localLock){List<StoredTransfer> out=new ArrayList<>();Path f=dataDirectory.resolve("transfer_logs.jsonl");if(!Files.exists(f))return out;try(BufferedReader r=Files.newBufferedReader(f,StandardCharsets.UTF_8)){String line;while((line=r.readLine())!=null){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();StoredTransfer t=readLocalTransfer(o);if(t.timestamp().isBefore(since)||(!near(t.source(),world,cx,cy,cz,radius)&&!near(t.destination(),world,cx,cy,cz,radius)))continue;out.add(t);}catch(RuntimeException ignored){}}}catch(IOException e){throw new SQLException(e);}out.sort(Comparator.comparing(StoredTransfer::timestamp).reversed());if(out.size()>limit)return new ArrayList<>(out.subList(0,limit));return out;}}
+    private List<StoredBlock> localBlocks(String world,int cx,int cy,int cz,double radius,Instant since,int limit)throws SQLException{synchronized(localLock){List<StoredBlock> out=new ArrayList<>();Path f=dataDirectory.resolve("block_logs.jsonl");if(!Files.exists(f))return out;try(BufferedReader r=Files.newBufferedReader(f,StandardCharsets.UTF_8)){String line;while((line=r.readLine())!=null){if(line.isBlank())continue;try{JsonObject o=JsonParser.parseString(line).getAsJsonObject();StoredBlock b=readLocalBlock(o);if(b.timestamp().isBefore(since)||!near(b.world(),b.x(),b.y(),b.z(),world,cx,cy,cz,radius))continue;out.add(b);}catch(RuntimeException ignored){}}}catch(IOException e){throw new SQLException(e);}out.sort(Comparator.comparing(StoredBlock::timestamp).reversed());if(out.size()>limit)return new ArrayList<>(out.subList(0,limit));return out;}}
     private boolean near(Endpoint e,String world,int x,int y,int z,double r){return e.world()!=null&&e.world().equals(world)&&distance(e.x(),e.y(),e.z(),x,y,z)<=r;}
     private boolean near(String w,int x,int y,int z,String world,int cx,int cy,int cz,double r){return w.equals(world)&&distance(x,y,z,cx,cy,cz)<=r;}
     private double distance(int x,int y,int z,int cx,int cy,int cz){long dx=(long)x-cx,dy=(long)y-cy,dz=(long)z-cz;return Math.sqrt(dx*dx+dy*dy+dz*dz);}
-
     private StoredTransfer readLocalTransfer(JsonObject o){return new StoredTransfer(o.get("id").getAsLong(),Instant.ofEpochMilli(o.get("timestamp").getAsLong()),UUID.fromString(o.get("transactionId").getAsString()),UUID.fromString(o.get("chainId").getAsString()),nullableUuid(o,"actorUuid"),nullableString(o,"actorName"),nullableUuid(o,"attributionUuid"),nullableString(o,"attributionName"),gson.fromJson(o.get("source"),Endpoint.class),gson.fromJson(o.get("destination"),Endpoint.class),o.get("itemKey").getAsString(),o.get("itemData").getAsString(),o.get("amount").getAsInt(),o.get("action").getAsString(),o.get("rollbackState").getAsString());}
     private StoredBlock readLocalBlock(JsonObject o){return new StoredBlock(o.get("id").getAsLong(),Instant.ofEpochMilli(o.get("timestamp").getAsLong()),UUID.fromString(o.get("transactionId").getAsString()),UUID.fromString(o.get("playerUuid").getAsString()),o.get("playerName").getAsString(),o.get("world").getAsString(),o.get("x").getAsInt(),o.get("y").getAsInt(),o.get("z").getAsInt(),o.get("beforeData").getAsString(),o.get("afterData").getAsString(),o.get("action").getAsString(),o.get("blockType").getAsString(),o.get("rollbackState").getAsString());}
     private UUID nullableUuid(JsonObject o,String k){return !o.has(k)||o.get(k).isJsonNull()?null:UUID.fromString(o.get(k).getAsString());}
     private String nullableString(JsonObject o,String k){return !o.has(k)||o.get(k).isJsonNull()?null:o.get(k).getAsString();}
-    private void updateState(Path file,long id,String state)throws SQLException{synchronized(localLock){if(!Files.exists(file))return;List<String> lines;try{lines=Files.readAllLines(file,StandardCharsets.UTF_8);}catch(IOException e){throw new SQLException(e);}for(int i=0;i<lines.size();i++){try{JsonObject o=JsonParser.parseString(lines.get(i)).getAsJsonObject();if(o.get("id").getAsLong()==id)o.addProperty("rollbackState",state);lines.set(i,gson.toJson(o));}catch(RuntimeException ignored){}}try{Path tmp=file.resolveSibling(file.getFileName()+".tmp");Files.write(tmp,lines,StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);Files.move(tmp,file,java.nio.file.StandardCopyOption.REPLACE_EXISTING);}catch(IOException e){throw new SQLException(e);}}}
+    private void updateState(Path file,long id,String state)throws SQLException{synchronized(localLock){if(!Files.exists(file))return;try{List<String> lines=Files.readAllLines(file,StandardCharsets.UTF_8);for(int i=0;i<lines.size();i++){try{JsonObject o=JsonParser.parseString(lines.get(i)).getAsJsonObject();if(o.get("id").getAsLong()==id)o.addProperty("rollbackState",state);lines.set(i,gson.toJson(o));}catch(RuntimeException ignored){}}Path tmp=file.resolveSibling(file.getFileName()+".tmp");Files.write(tmp,lines,StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);Files.move(tmp,file,java.nio.file.StandardCopyOption.REPLACE_EXISTING);}catch(IOException e){throw new SQLException(e);}}}
 
     private StoredTransfer readTransfer(ResultSet r)throws SQLException{Endpoint source=readEndpoint(r,"source");Endpoint dest=readEndpoint(r,"destination");return new StoredTransfer(r.getLong("id"),r.getTimestamp("created_at").toInstant(),UUID.fromString(r.getString("transaction_id")),UUID.fromString(r.getString("chain_id")),nullableUuid(r.getString("actor_uuid")),r.getString("actor_name"),nullableUuid(r.getString("attribution_uuid")),r.getString("attribution_name"),source,dest,r.getString("item_key"),r.getString("item_data"),r.getInt("amount"),r.getString("action"),r.getString("rollback_state"));}
-    private StoredBlock readBlock(ResultSet r)throws SQLException{return new StoredBlock(r.getLong("id"),r.getTimestamp("created_at").toInstant(),UUID.fromString(r.getString("transaction_id")),r.getString("player_uuid") == null ? null : UUID.fromString(r.getString("player_uuid")),r.getString("player_name"),r.getString("world"),r.getInt("x"),r.getInt("y"),r.getInt("z"),r.getString("before_data"),r.getString("after_data"),r.getString("action"),r.getString("block_type"),r.getString("rollback_state"));}
+    private StoredBlock readBlock(ResultSet r)throws SQLException{return new StoredBlock(r.getLong("id"),r.getTimestamp("created_at").toInstant(),UUID.fromString(r.getString("transaction_id")),UUID.fromString(r.getString("player_uuid")),r.getString("player_name"),r.getString("world"),r.getInt("x"),r.getInt("y"),r.getInt("z"),r.getString("before_data"),r.getString("after_data"),r.getString("action"),r.getString("block_type"),r.getString("rollback_state"));}
     private static int setEndpoint(PreparedStatement p,int i,Endpoint e)throws SQLException{p.setString(i++,e.type().name());setUuid(p,i++,e.entityId());setUuid(p,i++,e.playerId());p.setString(i++,e.world());if(e.world()==null){p.setNull(i++,Types.INTEGER);p.setNull(i++,Types.INTEGER);p.setNull(i++,Types.INTEGER);}else{p.setInt(i++,e.x());p.setInt(i++,e.y());p.setInt(i++,e.z());}p.setString(i++,e.label());return i;}
     private static Endpoint readEndpoint(ResultSet r,String prefix)throws SQLException{EndpointType type=EndpointType.valueOf(r.getString(prefix+"_type"));UUID entity=nullableUuid(r.getString(prefix+"_entity_uuid"));UUID player=nullableUuid(r.getString(prefix+"_player_uuid"));String world=r.getString(prefix+"_world");int x=r.getInt(prefix+"_x"),y=r.getInt(prefix+"_y"),z=r.getInt(prefix+"_z");return new Endpoint(type,entity,player,world,x,y,z,r.getString(prefix+"_label"));}
     private static void setUuid(PreparedStatement p,int index,UUID uuid)throws SQLException{if(uuid==null)p.setNull(index,Types.CHAR);else p.setString(index,uuid.toString());}
     private static void addUuid(JsonObject o,String key,UUID value){if(value==null)o.add(key,com.google.gson.JsonNull.INSTANCE);else o.addProperty(key,value.toString());}
     private static UUID nullableUuid(String s){return s==null?null:UUID.fromString(s);}
+
     public record StoredTransfer(long id,Instant timestamp,UUID transactionId,UUID chainId,UUID actorUuid,String actorName,UUID attributionUuid,String attributionName,Endpoint source,Endpoint destination,String itemKey,String itemData,int amount,String action,String rollbackState){}
-    public record StoredBlock(long id,Instant timestamp,UUID playerUuid,UUID playerUuidDuplicate,String playerName,String world,int x,int y,int z,String beforeData,String afterData,String action,String blockType,String rollbackState){public StoredBlock(long id,Instant timestamp,UUID transactionId,UUID playerUuid,String playerName,String world,int x,int y,int z,String beforeData,String afterData,String action,String blockType,String rollbackState){this(id,timestamp,transactionId,playerUuid,playerName,world,x,y,z,beforeData,afterData,action,blockType,rollbackState);}public UUID transactionId(){return playerUuidDuplicate;}}
+    public record StoredBlock(long id,Instant timestamp,UUID transactionId,UUID playerUuid,String playerName,String world,int x,int y,int z,String beforeData,String afterData,String action,String blockType,String rollbackState){}
     @Override public void close(){if(dataSource!=null)dataSource.close();}
 }
