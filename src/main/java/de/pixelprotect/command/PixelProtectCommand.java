@@ -26,7 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 public final class PixelProtectCommand {
-    private static final int PAGE_SIZE = 50;
+    private static final int PAGE_SIZE = 25;
     private final Plugin plugin;
     private final Database database;
     private final RollbackService rollback;
@@ -48,71 +48,106 @@ public final class PixelProtectCommand {
 
     public LiteralArgumentBuilder<CommandSourceStack> create() {
         return Commands.literal("pixelprotect")
-                .executes(c -> version(c.getSource().getSender()))
+                .executes(c -> help(c.getSource().getSender()))
+                .then(Commands.literal("help").executes(c -> help(c.getSource().getSender())))
                 .then(Commands.literal("version").executes(c -> version(c.getSource().getSender())))
-                .then(Commands.literal("status").requires(s -> s.getSender().hasPermission("pixelprotect.status"))
+                .then(Commands.literal("status")
+                        .requires(s -> s.getSender().hasPermission("pixelprotect.status"))
                         .executes(c -> status(c.getSource().getSender())))
-                .then(Commands.literal("inspect").requires(s -> s.getSender().hasPermission("pixelprotect.inspect"))
+                .then(Commands.literal("inspect")
+                        .requires(s -> s.getSender().hasPermission("pixelprotect.inspect"))
                         .executes(c -> inspect(c.getSource().getSender())))
-                .then(Commands.literal("lookup").requires(s -> s.getSender().hasPermission("pixelprotect.lookup"))
-                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, maxRadius))
-                                .then(Commands.argument("hours", IntegerArgumentType.integer(1, maxHours))
-                                        .executes(c -> lookup(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), ""))
-                                        .then(Commands.argument("selectors", StringArgumentType.greedyString())
-                                                .executes(c -> lookup(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), StringArgumentType.getString(c, "selectors")))))))
-                .then(Commands.literal("near").requires(s -> s.getSender().hasPermission("pixelprotect.lookup"))
-                        .executes(c -> lookup(c.getSource(), 5, 1, ""))
-                        .then(Commands.argument("selectors", StringArgumentType.greedyString())
-                                .executes(c -> lookup(c.getSource(), 5, 1, StringArgumentType.getString(c, "selectors")))))
-                .then(Commands.literal("rollback").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
-                        .then(Commands.literal("status")
-                                .then(Commands.argument("job", StringArgumentType.word())
-                                        .executes(c -> rollbackStatus(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
-                        .then(Commands.literal("cancel")
-                                .then(Commands.argument("job", StringArgumentType.word())
-                                        .executes(c -> rollbackCancel(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
-                        .then(Commands.argument("radius", IntegerArgumentType.integer(1, maxRadius))
-                                .then(Commands.argument("hours", IntegerArgumentType.integer(1, maxHours))
-                                        .executes(c -> rollback(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), ""))
-                                        .then(Commands.argument("selectors", StringArgumentType.greedyString())
-                                                .executes(c -> rollback(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), StringArgumentType.getString(c, "selectors")))))))
-                .then(Commands.literal("restore").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
-                        .then(Commands.argument("job", StringArgumentType.word())
-                                .executes(c -> restore(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
-                .then(Commands.literal("undo").requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
-                        .then(Commands.argument("job", StringArgumentType.word())
-                                .executes(c -> restore(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
-                .then(Commands.literal("purge").requires(s -> s.getSender().hasPermission("pixelprotect.purge"))
+                .then(Commands.literal("check")
+                        .requires(s -> s.getSender().hasPermission("pixelprotect.inspect"))
+                        .executes(c -> inspect(c.getSource().getSender())))
+                .then(lookupCommand("lookup"))
+                .then(lookupCommand("log"))
+                .then(nearCommand())
+                .then(rollbackCommand())
+                .then(restoreCommand("restore"))
+                .then(restoreCommand("undo"))
+                .then(Commands.literal("purge")
+                        .requires(s -> s.getSender().hasPermission("pixelprotect.purge"))
                         .then(Commands.argument("days", IntegerArgumentType.integer(1, 3650))
                                 .executes(c -> purge(c.getSource().getSender(), IntegerArgumentType.getInteger(c, "days")))))
-                .then(Commands.literal("help").executes(c -> help(c.getSource().getSender())));
+                .then(Commands.literal("reload")
+                        .requires(s -> s.getSender().hasPermission("pixelprotect.status"))
+                        .executes(c -> message(c.getSource().getSender(), "PixelProtect: Die Konfiguration wird beim nächsten Serverstart übernommen.")));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> lookupCommand(String name) {
+        return Commands.literal(name)
+                .requires(s -> s.getSender().hasPermission("pixelprotect.lookup"))
+                .executes(c -> lookup(c.getSource(), 5, 1, ""))
+                .then(Commands.argument("radius", IntegerArgumentType.integer(1, maxRadius))
+                        .executes(c -> lookup(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), 1, ""))
+                        .then(Commands.argument("hours", IntegerArgumentType.integer(1, maxHours))
+                                .executes(c -> lookup(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), ""))
+                                .then(Commands.argument("filter", StringArgumentType.greedyString())
+                                        .executes(c -> lookup(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), StringArgumentType.getString(c, "filter"))))));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> nearCommand() {
+        return Commands.literal("near")
+                .requires(s -> s.getSender().hasPermission("pixelprotect.lookup"))
+                .executes(c -> lookup(c.getSource(), 5, 1, ""))
+                .then(Commands.argument("filter", StringArgumentType.greedyString())
+                        .executes(c -> lookup(c.getSource(), 5, 1, StringArgumentType.getString(c, "filter"))));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> rollbackCommand() {
+        return Commands.literal("rollback")
+                .requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
+                .then(Commands.literal("status")
+                        .then(Commands.argument("job", StringArgumentType.word())
+                                .executes(c -> rollbackStatus(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
+                .then(Commands.literal("cancel")
+                        .then(Commands.argument("job", StringArgumentType.word())
+                                .executes(c -> rollbackCancel(c.getSource().getSender(), StringArgumentType.getString(c, "job")))))
+                .executes(c -> rollback(c.getSource(), 5, 1, ""))
+                .then(Commands.argument("radius", IntegerArgumentType.integer(1, maxRadius))
+                        .executes(c -> rollback(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), 1, ""))
+                        .then(Commands.argument("hours", IntegerArgumentType.integer(1, maxHours))
+                                .executes(c -> rollback(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), ""))
+                                .then(Commands.argument("filter", StringArgumentType.greedyString())
+                                        .executes(c -> rollback(c.getSource(), IntegerArgumentType.getInteger(c, "radius"), IntegerArgumentType.getInteger(c, "hours"), StringArgumentType.getString(c, "filter"))))));
+    }
+
+    private LiteralArgumentBuilder<CommandSourceStack> restoreCommand(String name) {
+        return Commands.literal(name)
+                .requires(s -> s.getSender().hasPermission("pixelprotect.rollback"))
+                .then(Commands.argument("job", StringArgumentType.word())
+                        .executes(c -> restore(c.getSource().getSender(), StringArgumentType.getString(c, "job"))));
     }
 
     private int inspect(CommandSender sender) {
-        if (!(sender instanceof Player player)) return message(sender, "PixelProtect: Der Inspektor ist nur für Spieler verfügbar.");
+        if (!(sender instanceof Player player)) return message(sender, "PixelProtect: /pp inspect kann nur ein Spieler benutzen.");
         boolean enabled = inspect.toggle(player);
         return message(player, enabled
-                ? "PixelProtect: Inspektor aktiviert. Klicke einen Block an, um seine Historie anzuzeigen."
-                : "PixelProtect: Inspektor deaktiviert.");
+                ? "PixelProtect: Inspektor an. Rechtsklick auf einen Block."
+                : "PixelProtect: Inspektor aus.");
     }
 
     private int lookup(CommandSourceStack source, int defaultRadius, int defaultHours, String raw) {
         var parsed = SelectorParser.parse(tokens(raw), defaultRadius, defaultHours, maxRadius, maxHours);
-        if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
+        if (!parsed.errors().isEmpty()) return sendErrors(source.getSource().getSender(), parsed.errors());
         Location location = resolveLocation(source, parsed);
-        if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
-        AuditQuery query;
-        try { query = query(location, parsed); }
-        catch (ArithmeticException e) { return message(source.getSender(), "PixelProtect: Die Seitennummer ist zu groß."); }
-        if (parsed.countOnly()) {
-            database.count(query).thenAccept(n -> send(source.getSender(), "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
-                    .exceptionally(t -> { send(source.getSender(), "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
-        } else {
-            database.count(query).thenCombine(database.query(query), (n, entries) -> new PageResult(n, entries, parsed.page()))
-                    .thenAccept(result -> sendLookup(source.getSender(), result))
-                    .exceptionally(t -> { send(source.getSender(), "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
+        if (location == null) return message(source.getSource().getSender(), "PixelProtect: Standort oder Welt konnte nicht ermittelt werden.");
+        final AuditQuery query;
+        try {
+            query = query(location, parsed);
+        } catch (ArithmeticException e) {
+            return message(source.getSource().getSender(), "PixelProtect: Diese Seitennummer ist zu groß.");
         }
-        send(source.getSender(), "PixelProtect: Protokollhistorie wird abgefragt …");
+        CommandSender sender = source.getSender();
+        if (parsed.countOnly()) {
+            database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " Treffer."))
+                    .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
+            return Command.SINGLE_SUCCESS;
+        }
+        database.count(query).thenCombine(database.query(query), PageResult::new)
+                .thenAccept(result -> sendLookup(sender, result, parsed.page()))
+                .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
         return Command.SINGLE_SUCCESS;
     }
 
@@ -120,36 +155,36 @@ public final class PixelProtectCommand {
         var parsed = SelectorParser.parse(tokens(raw), defaultRadius, defaultHours, maxRadius, maxHours);
         if (!parsed.errors().isEmpty()) return sendErrors(source.getSender(), parsed.errors());
         Location location = resolveLocation(source, parsed);
-        if (location == null) return message(source.getSender(), "PixelProtect: Es konnte keine gültige Welt oder Position ermittelt werden.");
+        if (location == null) return message(source.getSender(), "PixelProtect: Standort oder Welt konnte nicht ermittelt werden.");
         CommandSender sender = source.getSender();
         final AuditQuery query;
-        try { query = query(location, parsed); }
-        catch (ArithmeticException e) { return message(sender, "PixelProtect: Die Seitennummer ist zu groß."); }
+        try {
+            query = query(location, parsed);
+        } catch (ArithmeticException e) {
+            return message(sender, "PixelProtect: Diese Seitennummer ist zu groß.");
+        }
         if (parsed.countOnly()) {
-            database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " passende Protokolleinträge gefunden."))
+            database.count(query).thenAccept(n -> send(sender, "PixelProtect: " + n + " Treffer."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Abfrage fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
         }
-        final AuditQuery rollbackQuery = new AuditQuery(query.world(), query.centerX(), query.centerY(), query.centerZ(), query.radius(),
+        AuditQuery rollbackQuery = new AuditQuery(query.world(), query.centerX(), query.centerY(), query.centerZ(), query.radius(),
                 query.since(), query.until(), query.actorName(), query.includeActions(), query.excludeActions(),
                 query.includeBlocks(), query.excludeBlocks(), PAGE_SIZE, 0);
         queryAllForRollback(rollbackQuery, maxRecords).thenCompose(entries -> {
-            if (entries.isEmpty()) {
-                send(sender, parsed.preview() ? "PixelProtect: Die Vorschau enthält keine passenden Einträge." : "PixelProtect: Es gibt keine passenden Einträge zurückzusetzen.");
-                return CompletableFuture.<String>completedFuture(null);
-            }
+            if (entries.isEmpty()) return CompletableFuture.completedFuture("empty");
             if (parsed.preview()) return rollback.preview(entries).thenApply(r -> "preview:" + r.applied() + ":" + r.skipped());
             return rollback.start(entries).thenApply(j -> "job:" + j.id());
         }).thenAccept(result -> {
-            if (result == null) return;
-            if (result.startsWith("preview:")) {
+            if (result.equals("empty")) {
+                send(sender, parsed.preview() ? "PixelProtect: Nichts zum Zurücksetzen gefunden." : "PixelProtect: Keine passenden Änderungen gefunden.");
+            } else if (result.startsWith("preview:")) {
                 String[] values = result.split(":");
-                send(sender, "PixelProtect: Vorschau abgeschlossen. " + values[1] + " würden angewendet, " + values[2] + " würden übersprungen.");
+                send(sender, "PixelProtect: Vorschau – " + values[1] + " würden geändert, " + values[2] + " übersprungen.");
             } else {
-                send(sender, "PixelProtect: Rücksetzauftrag gestartet: " + result.substring(4) + ". Mit /pixelprotect rollback status <Auftrag> kannst du den Fortschritt prüfen.");
+                send(sender, "PixelProtect: Rücksetzung gestartet. Auftrag: " + result.substring(4));
             }
-        }).exceptionally(t -> { send(sender, "PixelProtect: Vorgang fehlgeschlagen – " + rootMessage(t)); return null; });
-        send(sender, "PixelProtect: Rücksetzung wird vorbereitet …");
+        }).exceptionally(t -> { send(sender, "PixelProtect: Rücksetzung fehlgeschlagen – " + rootMessage(t)); return null; });
         return Command.SINGLE_SUCCESS;
     }
 
@@ -185,82 +220,125 @@ public final class PixelProtectCommand {
         int offset = Math.multiplyExact(parsed.page() - 1, PAGE_SIZE);
         return new AuditQuery(location.getWorld().getUID(), location.getBlockX(), location.getBlockY(), location.getBlockZ(), parsed.radius(),
                 since, now, parsed.user(), parsed.includeActions(), parsed.excludeActions(), parsed.includeBlocks(), parsed.excludeBlocks(),
-                Math.min(PAGE_SIZE, maxRecords), offset);
+                PAGE_SIZE, offset);
     }
 
     private int restore(CommandSender sender, String raw) {
         try {
             UUID id = UUID.fromString(raw);
-            rollback.restore(id).thenAccept(r -> send(sender, "PixelProtect: Wiederherstellung abgeschlossen. " + r.applied() + " angewendet, " + r.skipped() + " übersprungen."))
+            rollback.restore(id).thenAccept(r -> send(sender, "PixelProtect: Wiederherstellung abgeschlossen – " + r.applied() + " geändert, " + r.skipped() + " übersprungen."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Wiederherstellung fehlgeschlagen – " + rootMessage(t)); return null; });
-            return message(sender, "PixelProtect: Wiederherstellung gestartet …");
-        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
+            return Command.SINGLE_SUCCESS;
+        } catch (IllegalArgumentException e) {
+            return message(sender, "PixelProtect: Ungültige Auftrags-ID.");
+        }
     }
 
     private int rollbackStatus(CommandSender sender, String raw) {
         try {
             UUID id = UUID.fromString(raw);
             rollback.statusAsync(id).thenAccept(job -> {
-                if (job == null) send(sender, "PixelProtect: Rücksetzauftrag nicht gefunden.");
-                else send(sender, "PixelProtect: Auftrag " + job.id() + " – Status: " + MessageService.rollbackStatus(job.status())
-                        + " – verarbeitet: " + job.processed() + "/" + job.total() + ", angewendet: " + job.applied()
-                        + ", übersprungen: " + job.skipped() + (job.error() == null ? "" : " – Fehler: " + job.error()));
-            }).exceptionally(t -> { send(sender, "PixelProtect: Statusabfrage fehlgeschlagen – " + rootMessage(t)); return null; });
-            return message(sender, "PixelProtect: Status des Rücksetzauftrags wird geladen …");
-        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
+                if (job == null) {
+                    send(sender, "PixelProtect: Auftrag nicht gefunden.");
+                    return;
+                }
+                String text = "PixelProtect: " + MessageService.rollbackStatus(job.status()) +
+                        " • " + job.processed() + "/" + job.total() + " verarbeitet • " + job.applied() + " geändert • " + job.skipped() + " übersprungen";
+                if (job.error() != null && !job.error().isBlank()) text += " • Fehler: " + job.error();
+                send(sender, text);
+            }).exceptionally(t -> { send(sender, "PixelProtect: Status konnte nicht gelesen werden – " + rootMessage(t)); return null; });
+            return Command.SINGLE_SUCCESS;
+        } catch (IllegalArgumentException e) {
+            return message(sender, "PixelProtect: Ungültige Auftrags-ID.");
+        }
     }
 
     private int rollbackCancel(CommandSender sender, String raw) {
         try {
             UUID id = UUID.fromString(raw);
             rollback.cancelAsync(id).thenAccept(cancelled -> send(sender, cancelled
-                    ? "PixelProtect: Abbruch des Rücksetzauftrags wurde angefordert."
-                    : "PixelProtect: Rücksetzauftrag nicht gefunden oder bereits abgeschlossen."))
+                    ? "PixelProtect: Abbruch angefordert."
+                    : "PixelProtect: Auftrag nicht gefunden oder bereits abgeschlossen."))
                     .exceptionally(t -> { send(sender, "PixelProtect: Abbruch fehlgeschlagen – " + rootMessage(t)); return null; });
             return Command.SINGLE_SUCCESS;
-        } catch (IllegalArgumentException e) { return message(sender, "PixelProtect: Die Auftrags-ID ist ungültig."); }
+        } catch (IllegalArgumentException e) {
+            return message(sender, "PixelProtect: Ungültige Auftrags-ID.");
+        }
     }
 
     private int purge(CommandSender sender, int days) {
         database.purgeBefore(System.currentTimeMillis() - days * 86_400_000L)
-                .thenAccept(n -> send(sender, "PixelProtect: " + n + " Protokolleinträge wurden gelöscht."))
+                .thenAccept(n -> send(sender, "PixelProtect: " + n + " alte Protokolleinträge gelöscht."))
                 .exceptionally(t -> { send(sender, "PixelProtect: Bereinigung fehlgeschlagen – " + rootMessage(t)); return null; });
-        return message(sender, "PixelProtect: Bereinigung gestartet …");
-    }
-
-    private int status(CommandSender sender) {
-        database.count().thenAccept(n -> send(sender, "PixelProtect: Betriebsbereit. Schema " + database.schemaVersion() + ", Warteschlange " + database.queueSize() + ", gespeicherte Protokolleinträge: " + n + "."))
-                .exceptionally(t -> { send(sender, "PixelProtect: Speicherstatus konnte nicht ermittelt werden – " + rootMessage(t)); return null; });
-        return message(sender, "PixelProtect: Speicherstatus wird geprüft …");
-    }
-
-    private int help(CommandSender sender) {
-        send(sender, "PixelProtect – Befehlsübersicht");
-        send(sender, "/pixelprotect inspect – Inspektor ein-/ausschalten");
-        send(sender, "/pixelprotect lookup <Radius> <Stunden> [u:Spieler] [t:Dauer] [a:Aktionen] [i:Blöcke] [e:Blöcke] [w:Welt] [c:x,y,z|ch:x,z] [#page:n] [#count]");
-        send(sender, "/pixelprotect rollback <Radius> <Stunden> [Filter] [#preview] – Änderungen zurücksetzen");
-        send(sender, "/pixelprotect rollback status <Auftrag> – Rücksetzstatus anzeigen");
-        send(sender, "/pixelprotect rollback cancel <Auftrag> – Rücksetzung abbrechen");
-        send(sender, "/pixelprotect restore <Auftrag> – abgeschlossene Rücksetzung wiederherstellen");
-        send(sender, "/pixelprotect undo <Auftrag> – letzte Rücksetzung umkehren");
-        send(sender, "/pixelprotect purge <Tage> – alte Protokolle löschen");
         return Command.SINGLE_SUCCESS;
     }
 
-    private int version(CommandSender sender) { return message(sender, "PixelProtect 1.0.0 – eigenständiger Protokoll- und Rücksetzungskern für Paper 26.2"); }
-
-    private void sendLookup(CommandSender sender, PageResult result) {
-        long pages = Math.max(1, (result.total() + PAGE_SIZE - 1) / PAGE_SIZE);
-        send(sender, "PixelProtect: Seite " + result.page() + "/" + pages + " – " + result.entries().size() + " von insgesamt " + result.total() + " Einträgen.");
-        result.entries().forEach(e -> send(sender, "#" + e.id() + " – " + actor(e) + " – " + MessageService.action(e.action()) + " – " + MessageService.coordinates(e) + " – " + MessageService.time(e.time())));
-        if (result.page() < pages) send(sender, "PixelProtect: Nächste Seite: #page:" + (result.page() + 1));
+    private int status(CommandSender sender) {
+        database.count().thenAccept(n -> send(sender, "PixelProtect: Betriebsbereit • " + n + " Protokolleinträge • Warteschlange " + database.queueSize() + " • Schema " + database.schemaVersion()))
+                .exceptionally(t -> { send(sender, "PixelProtect: Speicherstatus konnte nicht gelesen werden – " + rootMessage(t)); return null; });
+        return Command.SINGLE_SUCCESS;
     }
 
-    private static String actor(AuditEntry entry) { return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName(); }
-    private static List<String> tokens(String raw) { return raw == null || raw.isBlank() ? List.of() : Arrays.asList(raw.trim().split("\\s+")); }
-    private int sendErrors(CommandSender sender, List<String> errors) { errors.forEach(error -> send(sender, "PixelProtect: " + error)); return 0; }
-    private int message(CommandSender sender, String message) { send(sender, message); return Command.SINGLE_SUCCESS; }
-    private void send(CommandSender sender, String message) { Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendPlainMessage(message)); }
-    private static String rootMessage(Throwable throwable) { Throwable current = throwable; while (current.getCause() != null) current = current.getCause(); return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage(); }
-    private record PageResult(long total, List<AuditEntry> entries, int page) {}
+    private int help(CommandSender sender) {
+        send(sender, "PixelProtect: /pp inspect = prüfen • /pp lookup [Radius] [Stunden] = nachsehen • /pp rollback [Radius] [Stunden] = zurücksetzen • /pp rollback status <Auftrag> • /pp rollback cancel <Auftrag> • /pp restore <Auftrag> • /pp purge <Tage> • /pp status");
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private int version(CommandSender sender) {
+        return message(sender, "PixelProtect 1.0.0");
+    }
+
+    private void sendLookup(CommandSender sender, PageResult result, int page) {
+        long pages = Math.max(1, (result.total() + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (result.entries().isEmpty()) {
+            send(sender, "PixelProtect: Keine Änderungen im gewählten Bereich und Zeitraum gefunden.");
+            return;
+        }
+        StringBuilder message = new StringBuilder("PixelProtect: ").append(result.total()).append(" Treffer (Seite ").append(page).append('/').append(pages).append(")");
+        for (AuditEntry entry : result.entries()) {
+            message.append("\n• ").append(actor(entry)).append(" – ").append(MessageService.action(entry.action()))
+                    .append(" – ").append(MessageService.coordinates(entry)).append(" – ").append(MessageService.time(entry.time()));
+        }
+        if (page < pages) message.append("\nNächste Seite: /pp lookup ").append(result.radius()).append(' ').append(result.hours()).append(" #page:").append(page + 1);
+        send(sender, message.toString());
+    }
+
+    private static String actor(AuditEntry entry) {
+        return entry.actorName() == null || entry.actorName().isBlank() ? "Unbekannt" : entry.actorName();
+    }
+
+    private static List<String> tokens(String raw) {
+        return raw == null || raw.isBlank() ? List.of() : Arrays.asList(raw.trim().split("\\s+"));
+    }
+
+    private int sendErrors(CommandSender sender, List<String> errors) {
+        send(sender, "PixelProtect: " + String.join(" | ", errors));
+        return 0;
+    }
+
+    private int message(CommandSender sender, String message) {
+        send(sender, message);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private void send(CommandSender sender, String message) {
+        if (sender instanceof Player player) {
+            player.getScheduler().run(plugin, task -> {
+                if (player.isOnline()) player.sendPlainMessage(message);
+            }, null);
+        } else {
+            Bukkit.getGlobalRegionScheduler().run(plugin, task -> sender.sendPlainMessage(message));
+        }
+    }
+
+    private static String rootMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current.getCause() != null) current = current.getCause();
+        return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
+    }
+
+    private record PageResult(long total, List<AuditEntry> entries) {
+        int radius() { return entries.isEmpty() ? 5 : 0; }
+        int hours() { return 1; }
+    }
 }
