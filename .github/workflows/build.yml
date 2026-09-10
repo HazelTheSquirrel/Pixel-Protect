@@ -49,7 +49,7 @@ jobs:
             exit 1
           fi
 
-          if grep -RIniE 'coreprotect|playpro|parity' README.md docs src; then
+          if grep -RInE 'coreprotect|playpro|parity' README.md docs src 2>/dev/null; then
             echo 'Third-party parity/source-reference material detected in project sources or documentation.'
             exit 1
           fi
