@@ -22,7 +22,6 @@ import org.bukkit.inventory.ItemStack;
 
 import java.time.Instant;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -73,12 +72,8 @@ public final class TransferService implements AutoCloseable {
             if (clickedEndpoint.type() == EndpointType.PLAYER) return;
             int cursorAmount = amount(cursor);
             int currentAmount = amount(current);
-            if (cursorAmount > 0) {
-                submitPlayerTransfer(player, playerEndpoint, clickedEndpoint, cursor.clone(), cursorAmount, "PLAYER_TRANSFER");
-            }
-            if (currentAmount > 0) {
-                submitPlayerTransfer(player, clickedEndpoint, playerEndpoint, current.clone(), currentAmount, "PLAYER_TRANSFER");
-            }
+            if (cursorAmount > 0) submitPlayerTransfer(player, playerEndpoint, clickedEndpoint, cursor.clone(), cursorAmount, "PLAYER_TRANSFER");
+            if (currentAmount > 0) submitPlayerTransfer(player, clickedEndpoint, playerEndpoint, current.clone(), currentAmount, "PLAYER_TRANSFER");
             return;
         }
 
@@ -106,9 +101,7 @@ public final class TransferService implements AutoCloseable {
             if (clickedEndpoint.type() == EndpointType.PLAYER) return;
             source = playerEndpoint;
             destination = clickedEndpoint;
-        } else {
-            return;
-        }
+        } else return;
 
         submitPlayerTransfer(player, source, destination, candidate, amount, "PLAYER_TRANSFER");
     }
@@ -138,12 +131,8 @@ public final class TransferService implements AutoCloseable {
         Endpoint destination = EndpointResolver.resolve(target);
         if (destination == null || destination.type() == EndpointType.PLAYER) return;
 
-        submitPlayerTransfer(player,
-                Endpoint.player(player.getUniqueId(), player.getName()),
-                destination,
-                oldCursor.clone(),
-                amount,
-                event.getType() == DragType.EVEN ? "PLAYER_DRAG" : "PLAYER_DRAG_SINGLE");
+        submitPlayerTransfer(player, Endpoint.player(player.getUniqueId(), player.getName()), destination,
+                oldCursor.clone(), amount, event.getType() == DragType.EVEN ? "PLAYER_DRAG" : "PLAYER_DRAG_SINGLE");
     }
 
     public void automatedMove(InventoryMoveItemEvent event) {
@@ -158,11 +147,12 @@ public final class TransferService implements AutoCloseable {
 
         UUID tx = UUID.randomUUID();
         Instant now = Instant.now();
+        ItemStack snapshot = item.clone();
         ownershipExecutor.execute(() -> {
             Owner owner = initiator == null ? null : ownership.load(initiator);
             if (owner == null) owner = ownership.load(source);
             if (owner == null) owner = ownership.load(destination);
-            submitAutomated(tx, now, owner, source, destination, item);
+            submitAutomated(tx, now, owner, source, destination, snapshot);
         });
     }
 
@@ -171,6 +161,8 @@ public final class TransferService implements AutoCloseable {
         Item item = event.getItem();
         if (item == null || item.isDead()) return;
         ItemStack stack = item.getItemStack();
+        if (stack == null || stack.isEmpty()) return;
+        ItemStack snapshot = stack.clone();
         Endpoint destination = EndpointResolver.resolve(event.getInventory());
         if (destination == null) return;
         Endpoint source = ground(item);
@@ -178,7 +170,7 @@ public final class TransferService implements AutoCloseable {
         UUID tx = UUID.randomUUID();
         ownershipExecutor.execute(() -> {
             Owner owner = ownership.load(destination);
-            submitAutomated(tx, now, owner, source, destination, stack);
+            submitAutomated(tx, now, owner, source, destination, snapshot);
         });
     }
 
@@ -187,6 +179,7 @@ public final class TransferService implements AutoCloseable {
         Item item = event.getItem();
         if (item == null || item.isDead()) return;
         ItemStack stack = item.getItemStack();
+        if (stack == null || stack.isEmpty()) return;
         Endpoint source = ground(item);
         Endpoint destination = Endpoint.player(player.getUniqueId(), player.getName());
         submitPlayerTransfer(player, source, destination, stack.clone(), stack.getAmount(), "GROUND_PICKUP");
@@ -245,13 +238,9 @@ public final class TransferService implements AutoCloseable {
         return a.compareTo(b) <= 0 ? a + "|" + b : b + "|" + a;
     }
 
-    private static String sessionKey(Player player, Endpoint endpoint) {
-        return player.getUniqueId() + "|" + endpoint.key();
-    }
+    private static String sessionKey(Player player, Endpoint endpoint) { return player.getUniqueId() + "|" + endpoint.key(); }
 
-    private void cleanupTransactions(long now) {
-        activeTransactions.entrySet().removeIf(entry -> now - entry.getValue().lastActivityMillis() > PLAYER_TRANSACTION_WINDOW_MILLIS * 4);
-    }
+    private void cleanupTransactions(long now) { activeTransactions.entrySet().removeIf(entry -> now - entry.getValue().lastActivityMillis() > PLAYER_TRANSACTION_WINDOW_MILLIS * 4); }
 
     private static boolean isPickup(InventoryAction action) {
         return switch (action) {
@@ -300,9 +289,7 @@ public final class TransferService implements AutoCloseable {
         return Math.min(total, remaining);
     }
 
-    private static int amount(ItemStack stack) {
-        return stack == null || stack.isEmpty() ? 0 : stack.getAmount();
-    }
+    private static int amount(ItemStack stack) { return stack == null || stack.isEmpty() ? 0 : stack.getAmount(); }
 
     @Override public void close() {
         ownershipExecutor.shutdown();
