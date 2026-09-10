@@ -24,12 +24,15 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-public final class TransferService {
+public final class TransferService implements AutoCloseable {
     private static final long PLAYER_TRANSACTION_WINDOW_MILLIS = 1500L;
 
     private final AsyncLogQueue queue;
     private final OwnershipService ownership;
+    private final ExecutorService ownershipExecutor = Executors.newVirtualThreadPerTaskExecutor();
     private final ConcurrentHashMap<String, ActiveTransaction> activeTransactions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, UUID> openSessions = new ConcurrentHashMap<>();
 
@@ -65,10 +68,23 @@ public final class TransferService {
         ItemStack current = event.getCurrentItem();
         ItemStack cursor = event.getCursor();
         InventoryAction action = event.getAction();
+
+        if (action == InventoryAction.SWAP_WITH_CURSOR) {
+            if (clickedEndpoint.type() == EndpointType.PLAYER) return;
+            int cursorAmount = amount(cursor);
+            int currentAmount = amount(current);
+            if (cursorAmount > 0) {
+                submitPlayerTransfer(player, playerEndpoint, clickedEndpoint, cursor.clone(), cursorAmount, "PLAYER_TRANSFER");
+            }
+            if (currentAmount > 0) {
+                submitPlayerTransfer(player, clickedEndpoint, playerEndpoint, current.clone(), currentAmount, "PLAYER_TRANSFER");
+            }
+            return;
+        }
+
         ItemStack candidate = current != null && !current.isEmpty() ? current.clone() : cursor != null && !cursor.isEmpty() ? cursor.clone() : null;
         if (candidate == null) return;
-
-        int amount = movedAmount(action, current, cursor, clicked);
+        int amount = movedAmount(action, current, cursor, clicked, event);
         if (amount <= 0) return;
 
         Endpoint source;
@@ -87,10 +103,6 @@ public final class TransferService {
             source = clickedEndpoint;
             destination = playerEndpoint;
         } else if (isPlace(action)) {
-            if (clickedEndpoint.type() == EndpointType.PLAYER) return;
-            source = playerEndpoint;
-            destination = clickedEndpoint;
-        } else if (action == InventoryAction.SWAP_WITH_CURSOR) {
             if (clickedEndpoint.type() == EndpointType.PLAYER) return;
             source = playerEndpoint;
             destination = clickedEndpoint;
@@ -146,7 +158,7 @@ public final class TransferService {
 
         UUID tx = UUID.randomUUID();
         Instant now = Instant.now();
-        CompletableFuture.runAsync(() -> {
+        ownershipExecutor.execute(() -> {
             Owner owner = initiator == null ? null : ownership.load(initiator);
             if (owner == null) owner = ownership.load(source);
             if (owner == null) owner = ownership.load(destination);
@@ -164,7 +176,7 @@ public final class TransferService {
         Endpoint source = ground(item);
         Instant now = Instant.now();
         UUID tx = UUID.randomUUID();
-        CompletableFuture.runAsync(() -> {
+        ownershipExecutor.execute(() -> {
             Owner owner = ownership.load(destination);
             submitAutomated(tx, now, owner, source, destination, stack);
         });
@@ -194,10 +206,11 @@ public final class TransferService {
 
     private void submitPlayerTransfer(Player player, Endpoint source, Endpoint destination, ItemStack item, int amount, String action) {
         if (amount <= 0) return;
-        item.setAmount(Math.min(amount, item.getMaxStackSize()));
+        int bounded = Math.min(amount, item.getMaxStackSize());
+        item.setAmount(bounded);
         UUID transactionId = sessionTransaction(player, source, destination);
         queue.submitTransfer(new TransferLog(transactionId, Instant.now(), player.getUniqueId(), player.getName(),
-                player.getUniqueId(), player.getName(), source, destination, ItemCodec.key(item), ItemCodec.encode(item), amount, action));
+                player.getUniqueId(), player.getName(), source, destination, ItemCodec.key(item), ItemCodec.encode(item), bounded, action));
     }
 
     private UUID sessionTransaction(Player player, Endpoint source, Endpoint destination) {
@@ -254,9 +267,9 @@ public final class TransferService {
         };
     }
 
-    private static int movedAmount(InventoryAction action, ItemStack current, ItemStack cursor, Inventory clicked) {
-        int currentAmount = current == null || current.isEmpty() ? 0 : current.getAmount();
-        int cursorAmount = cursor == null || cursor.isEmpty() ? 0 : cursor.getAmount();
+    private static int movedAmount(InventoryAction action, ItemStack current, ItemStack cursor, Inventory clicked, InventoryClickEvent event) {
+        int currentAmount = amount(current);
+        int cursorAmount = amount(cursor);
         return switch (action) {
             case PICKUP_ALL -> currentAmount;
             case PICKUP_HALF -> (currentAmount + 1) / 2;
@@ -266,10 +279,41 @@ public final class TransferService {
             case PLACE_ONE -> Math.min(1, cursorAmount);
             case PLACE_SOME -> Math.max(0, Math.min(cursorAmount, Math.max(0, clicked.getMaxStackSize() - currentAmount)));
             case MOVE_TO_OTHER_INVENTORY -> currentAmount;
-            case COLLECT_TO_CURSOR -> currentAmount;
-            case SWAP_WITH_CURSOR -> cursorAmount;
+            case COLLECT_TO_CURSOR -> collectAmount(event, cursor);
             default -> 0;
         };
+    }
+
+    private static int collectAmount(InventoryClickEvent event, ItemStack cursor) {
+        if (cursor == null || cursor.isEmpty()) return 0;
+        int remaining = Math.max(0, cursor.getMaxStackSize() - cursor.getAmount());
+        if (remaining == 0) return 0;
+        int total = 0;
+        for (Inventory inventory : new Inventory[]{event.getView().getTopInventory(), event.getView().getBottomInventory()}) {
+            for (ItemStack stack : inventory.getStorageContents()) {
+                if (stack != null && !stack.isEmpty() && stack.isSimilar(cursor)) {
+                    total += stack.getAmount();
+                    if (total >= remaining) return remaining;
+                }
+            }
+        }
+        return Math.min(total, remaining);
+    }
+
+    private static int amount(ItemStack stack) {
+        return stack == null || stack.isEmpty() ? 0 : stack.getAmount();
+    }
+
+    @Override public void close() {
+        ownershipExecutor.shutdown();
+        try {
+            if (!ownershipExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) ownershipExecutor.shutdownNow();
+        } catch (InterruptedException e) {
+            ownershipExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        activeTransactions.clear();
+        openSessions.clear();
     }
 
     private record ActiveTransaction(UUID id, long lastActivityMillis) {}
