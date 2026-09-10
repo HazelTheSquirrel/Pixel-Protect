@@ -21,6 +21,7 @@ public final class PixelProtect extends JavaPlugin {
     private AsyncLogQueue queue;
     private InspectorService inspector;
     private RollbackService rollback;
+    private TransferService transfer;
 
     @Override public void onEnable(){
         saveDefaultConfig();
@@ -30,7 +31,7 @@ public final class PixelProtect extends JavaPlugin {
         OwnershipService ownership=new OwnershipService(database,queue);
         inspector=new InspectorService(this,database,getConfig().getInt("logging.inspector-limit",12));
         rollback=new RollbackService(this,database);
-        TransferService transfer=new TransferService(this,queue,ownership);
+        transfer=new TransferService(this,queue,ownership);
         WorldForensicsService world=new WorldForensicsService(queue);
         Bukkit.getPluginManager().registerEvents(new ForensicListener(world,transfer,inspector,ownership),this);
         PixelProtectCommand command=new PixelProtectCommand(inspector,rollback,queue);
@@ -39,6 +40,7 @@ public final class PixelProtect extends JavaPlugin {
     }
 
     @Override public void onDisable(){
+        if(transfer!=null)transfer.close();
         if(queue!=null)queue.close();
         if(database!=null)database.close();
         getLogger().info("Pixel-Protect forensic engine stopped.");
